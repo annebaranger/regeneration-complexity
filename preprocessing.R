@@ -6,17 +6,17 @@ library(ggplot2)
 
 ### Path ####
 #%%%%%%%%%%%%
-data_path = "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-fullprocess/GER10_raw_sample.las"
-
+data_raw = "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-fullprocess/GER10_raw_sample.las"
+data_understory="C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-fullprocess/GER10_sample_understory.las"
 
 # 1) Read point cloud
-las <- readLAS(data_path)
+raw_las <- readTLSLAS(data_raw)
 stopifnot(!is.empty(las))
-summary(las)
+summary(understory_las)
+
 
 # 2) denoise
 # las_denoise= classify_noise(las,sor()) # removes to many points from upper canopy
-
 
 ggplot(las@data, aes(x = Z)) +
   geom_histogram(bins = 100, fill = "steelblue", color = "white") +
@@ -80,3 +80,24 @@ writeLAS(segmented, "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF pro
 
 # show results
 lidR::plot(segmented, color = "TreeID")
+
+
+### Inventory ####
+understory_las <- readTLSLAS(data_understory)
+map_init <- CspStandSegmentation::find_base_coordinates_raster(understory_las)
+
+understory_segmented <- understory_las |>
+  CspStandSegmentation::add_geometry(n_cores = 2) |>
+  CspStandSegmentation::csp_cost_segmentation(map_init, 1, N_cores = 2)
+plot(understory_segmented,color="TreeID")
+# perform inventory
+plot(understory_las,color="Original cloud index")
+table(understory_las@data$`Original cloud index`)
+inventory <- CspStandSegmentation::forest_inventory(understory_las,
+                                                    slice_min = 0.2,
+                                                    slice_max = 4,
+                                                    increment = 0.2,
+                                                    width = 0.1,
+                                                    max_dbh = 1,
+                                                    tree_id_col = "Original cloud index",
+                                                    n_cores = 2)
