@@ -1,5 +1,6 @@
 library(ITSMe)
-
+library(lidR)
+library(dplyr)
 path_trees="C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/"
 
 
@@ -25,7 +26,8 @@ DBHs <- plot_dbh_fit_pcs(
 )
 
 save(DBHs,file = file.path(path_trees,"DBHs.Rdata"))
-save(Hs[[c("File","Heights")]],file=file.path(path_trees,"Hs.Rdata"))
+Hs_short=Hs[c("File","Heights")]
+save(Hs_short,file=file.path(path_trees,"Hs.Rdata"))
 
 
 ### Index manual check ####
@@ -220,7 +222,37 @@ writeLines(files_hand, file.path(path_trees, "files_to_handle_manually.txt"))
 write.csv(ger10_inventory, file.path(path_trees, "GER10_inventory.csv"), row.names = FALSE)
 
 
+### create inventory plot ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+inventory=read.csv( file.path(path_trees, "GER10_inventory.csv"))
+
+understory_12=inventory %>% 
+  filter(regen_est_12|regen_unest_12)
+
+understory_10=inventory %>% 
+  filter(regen_est_10|regen_unest_10)
+
+understory_7.5=inventory %>% 
+  filter(regen_est_7.5|regen_unest_7.5)
 
 
+library(data.table)
+library(Rvcg)
 
+fns <- file.path(path_trees,understory_12$File)
+
+read_xyz <- function(fn) {
+  dt <- read_tree_pc(fn)
+  setDT(dt)
+  return(dt)
+}
+
+merged <- rbindlist(lapply(fns, read_xyz))
+las_merged=LAS(merged[, c("X", "Y", "Z")])
+writeLAS(las_merged, file.path(path_trees, "understory_12.las"))
+
+names(xyz_list) <- tools::file_path_sans_ext(basename(fns))
+
+
+# gather point cloud
 
