@@ -1,7 +1,7 @@
 library(VoxR)
 
 # Setup
-input_folder <- "C:/Users/eck38/Documents_C_Drive/Cairngorms_24/AllNorm_Las_return/No_ground/ASC/"
+input_folder <- "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-fullprocess/"
 output_csv <- "C:/Users/eck38/Documents_C_Drive/Cairngorms_24/enl_results3.csv"
 
 # Get all files
@@ -10,6 +10,8 @@ cat("Found", length(all_files), "files to process\n\n")
 
 ##function found at https://rdrr.io/github/spatial-mk/tre3d/src/R/ENL.R 
 ##author Matthias Kunz, last updated: 27.04.2019
+
+cloud_xyz=understory_las@data
 
 ENL <- function(cloud_xyz,
                 voxel_size = 0.20,     # 20 cm voxels (paper standard)

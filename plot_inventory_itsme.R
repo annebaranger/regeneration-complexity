@@ -1,7 +1,7 @@
 library(ITSMe)
 library(lidR)
 library(dplyr)
-path_trees="C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/"
+path_trees="C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/"
 
 
 ### Batch process height/diamter ####
@@ -10,24 +10,24 @@ path_trees="C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger
 # Tree height:
 # Plot the tree point clouds (check for outliers)
 # Specify dtm and r in case lower part of tree is not sampled
-Hs <- plot_tree_height_pcs(
-  PCs_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/",
-  extension = ".txt",
-  OUT_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/"
-)
-
-# DBH:
-# try out different thresholdR2 and slice_thickness values when default values fail
-DBHs <- plot_dbh_fit_pcs(
-  PCs_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/",
-  extension = ".txt",
-  OUT_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/",
-  thresholdR2 = 0.0025, slice_thickness = 0.2
-)
-
-save(DBHs,file = file.path(path_trees,"DBHs.Rdata"))
-Hs_short=Hs[c("File","Heights")]
-save(Hs_short,file=file.path(path_trees,"Hs.Rdata"))
+# Hs <- plot_tree_height_pcs(
+#   PCs_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/",
+#   extension = ".txt",
+#   OUT_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/"
+# )
+# 
+# # DBH:
+# # try out different thresholdR2 and slice_thickness values when default values fail
+# DBHs <- plot_dbh_fit_pcs(
+#   PCs_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/",
+#   extension = ".txt",
+#   OUT_path = "C:/Users/amob2/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-regeneration-seg/",
+#   thresholdR2 = 0.0025, slice_thickness = 0.2
+# )
+# 
+# save(DBHs,file = file.path(path_trees,"DBHs.Rdata"))
+# Hs_short=Hs[c("File","Heights")]
+# save(Hs_short,file=file.path(path_trees,"Hs.Rdata"))
 
 
 ### Index manual check ####

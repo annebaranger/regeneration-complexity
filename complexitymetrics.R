@@ -1,6 +1,6 @@
-# ============================================================
-# TLS regeneration complexity metrics from a LAS/LAZ point cloud
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# TLS regeneration complexity metrics from a LAS/LAZ point cloud ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 # ---- Packages ----
 req <- c("lidR", "terra", "dplyr", "data.table", "spdep", "gstat", "sf")
@@ -9,25 +9,26 @@ if (length(to_install)) install.packages(to_install)
 lapply(req, library, character.only = TRUE)
 
 # ---- User parameters ----
-las_path <- "path/to/your_pointcloud.laz"   # <-- change
+las_path <- "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/ger10-processing/GER10-fullprocess/GER10_sample_understory.las"   # <-- change
+raw_las <- readTLSLAS(las_path)
 
 # regeneration height band (meters above ground)
-zmin_regen <- 0.2
-zmax_regen <- 3.0
+zmin_regen <- min(raw_las@data$Z)+0.2
+zmax_regen <- max(raw_las@data$Z)
 
 # raster grid resolution for horizontal metrics (meters)
-grid_res <- 0.5
+grid_res <- 0.25
 
 # voxel size for occupancy-based metrics (meters)
 voxel_xy <- 0.25
-voxel_z  <- 0.20
+voxel_z  <- 0.25
 
 # height bin size for vertical profiles (meters)
-zbin <- 0.20
+zbin <- 0.25
 
 # terrain normalization settings (if Z already normalized, set normalize = FALSE)
 normalize <- TRUE
-dtm_res <- 0.5     # DTM resolution for normalization
+dtm_res <- 0.1     # DTM resolution for normalization
 csf_cloth_resolution <- 0.5
 
 # lacunarity settings (box sizes in cells on the regen presence raster)
@@ -39,9 +40,9 @@ variogram_width  <- 1.0    # meters
 
 set.seed(1)
 
-# ============================================================
-# Helper functions
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%
+# Helper functions ####
+#%%%%%%%%%%%%%%%%%%%%%%
 
 # Safe Shannon entropy (natural log)
 shannon_entropy <- function(p) {
@@ -174,9 +175,9 @@ lacunarity_gliding <- function(binmat, box_sizes) {
   out
 }
 
-# ============================================================
-# Load + normalize point cloud
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Load + normalize point cloud ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 las <- lidR::readLAS(las_path)
 stopifnot(!lidR::is.empty(las))
@@ -190,16 +191,16 @@ if (normalize) {
   las <- lidR::lasfilter(las, Z >= -0.05)
 }
 
-# ============================================================
-# Filter regeneration band
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Filter regeneration band ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 las_regen <- lidR::lasfilter(las, Z >= zmin_regen & Z <= zmax_regen)
 if (lidR::is.empty(las_regen)) stop("No points found in the specified regeneration height band.")
 
-# ============================================================
-# Build a horizontal grid and compute per-cell structural proxies
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Build a horizontal grid and compute per-cell structural proxies ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 # Use terra raster template covering point cloud extent
 ext <- terra::ext(las)
@@ -209,7 +210,7 @@ r_template <- terra::rast(extent = ext, resolution = grid_res, crs = NA)
 # lidR grid_metrics returns a raster-like object; convert to terra
 r_n <- lidR::grid_metrics(las_regen, ~length(Z), res = grid_res)
 r_n <- terra::rast(r_n)
-
+plot(r_n)
 # Per-cell: height percentiles / IQR in regen band
 r_h50 <- terra::rast(lidR::grid_metrics(las_regen, ~quantile(Z, 0.50, na.rm=TRUE), res = grid_res))
 r_h95 <- terra::rast(lidR::grid_metrics(las_regen, ~quantile(Z, 0.95, na.rm=TRUE), res = grid_res))
@@ -221,10 +222,10 @@ r_fhd <- terra::rast(lidR::grid_metrics(
   ~compute_fhd(Z, bin = zbin, zmin = zmin_regen, zmax = zmax_regen),
   res = grid_res
 ))
-
-# ============================================================
-# Voxel occupancy fraction (regen band) as a robust structure proxy
-# ============================================================
+plot(r_fhd)
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Voxel occupancy fraction (regen band) as a robust structure proxy ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 # Create voxel indices
 dt <- data.table::as.data.table(las_regen@data[, c("X","Y","Z")])
@@ -267,9 +268,9 @@ r_occ <- terra::rast(r_template)
 cells <- terra::cellFromXY(r_occ, as.matrix(occ_vox[, .(x, y)]))
 r_occ[cells] <- occ_vox$occ_vox_frac
 
-# ============================================================
-# Plot-level (whole cloud) height distribution + vertical heterogeneity
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Plot-level (whole cloud) height distribution + vertical heterogeneity ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 z_all <- las_regen@data$Z
 plot_metrics <- data.frame(
@@ -286,10 +287,10 @@ plot_metrics <- data.frame(
   FHD_effective_layers = exp(compute_fhd(z_all, bin = zbin, zmin = zmin_regen, zmax = zmax_regen))
 )
 
-# ============================================================
-# Horizontal heterogeneity metrics
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# Horizontal heterogeneity metrics ####
 # (Moran's I, variogram range/sill, lacunarity)
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 # Choose a primary "regen density" map:
 # - occupied voxel fraction is robust to point density effects
@@ -319,9 +320,9 @@ horiz_summ <- data.frame(
   variogram_sill  = vg_primary$sill
 )
 
-# ============================================================
-# "PAI-like" proxy from voxel transmittance (CAUTION)
-# ============================================================
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+# "PAI-like" proxy from voxel transmittance (CAUTION) ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 # This is NOT true PAI unless you have ray/pulse info.
 # Proxy idea: for each XY column, compute fraction of empty voxels in regen band (gap proxy),
 # then apply Beer–Lambert: ePAI_proxy = -ln(gap)
@@ -372,9 +373,9 @@ pai_summ <- data.frame(
   variogram_sill_ePAI_proxy  = vg_pai$sill
 )
 
-# ============================================================
-# Save outputs
-# ============================================================
+#%%%%%%%%%%%%%%%%%%
+# Save outputs ####
+#%%%%%%%%%%%%%%%%%%
 
 dir.create("tls_metrics_out", showWarnings = FALSE)
 
