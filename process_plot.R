@@ -9,7 +9,7 @@ path_plot="C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project"
 path_folder=file.path(path_plot,
                       paste0(plot,"-processing"))
 path_trees=file.path(path_folder,"trees")
-subfolders=c("adults","regen","hesitation","dead-incomplete","tree-parts")
+subfolders=c("adults")#,"regen","hesitation","dead-incomplete","tree-parts")
 
 ### Create one point cloud ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -34,12 +34,29 @@ rm(cloud_list)
 
 #normalize cp
 # Use a low percentile instead of the absolute minimum
-dtm_rast <- rast(file.path(path_folder,
-                           list.files(path_folder,pattern="dtm.tif")))
+
 # plot(dtm_rast)
 las_norm <- normalize_height(las, dtm_rast)
 # plot(las_norm)
 # plot(las)
+
+### DTM LAS ####
+#%%%%%%%%%%%%%%%
+dtm_rast <- rast(file.path(path_folder,
+                           list.files(path_folder,pattern="dtm.tif")))
+las <- clip_rectangle(las,
+                      xleft   = ext(dtm_rast)$xmin,
+                      ybottom = ext(dtm_rast)$ymin,
+                      xright  = ext(dtm_rast)$xmax,
+                      ytop    = ext(dtm_rast)$ymax)
+las@data$X <- las@data$X - min(las@data$X)
+las@data$Y <- las@data$Y - min(las@data$Y)
+las@data$Z <- las@data$Z - min(las@data$Z)
+las <- las_update(las)
+
+las_norm <- normalize_height(las, dtm_rast)
+plot(las_norm)
+
 
 
 # Slice
@@ -68,3 +85,10 @@ plot(subplot1)
 tree_pc <- read_tree_pc(path = file.path(path_trees,
                                          "subplot_000000.txt"))
 XYZ_pos <- tree_position_pc(pc = tree_pc)
+
+
+plot(filter_poi(las, Z >= min(las@data$Z) & Z <min(las@data$Z)+3),axis=TRUE)
+plot(las,axis=TRUE)
+plot(rasterize_canopy(filter_poi(las_norm, Z >= min(las_norm@data$Z) & Z <min(las_norm@data$Z)+2),res=0.25))
+
+plot(filter_poi(las_norm, Z >= min(las_norm@data$Z) & Z <min(las_norm@data$Z)+5),axis=TRUE)
