@@ -5,7 +5,8 @@ library(data.table)
 library(terra)
 
 plot="GER02"
-path_plot="C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project"
+user="amob2"
+path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
 path_folder=file.path(path_plot,
                       paste0(plot,"-processing"))
 path_trees=file.path(path_folder,"trees")
@@ -32,13 +33,6 @@ cloud_list <- lapply(txt_list, function(f) {
 las <- LAS(do.call(rbind, cloud_list))
 rm(cloud_list)
 
-#normalize cp
-# Use a low percentile instead of the absolute minimum
-
-# plot(dtm_rast)
-las_norm <- normalize_height(las, dtm_rast)
-# plot(las_norm)
-# plot(las)
 
 ### DTM LAS ####
 #%%%%%%%%%%%%%%%
@@ -55,10 +49,10 @@ las@data$Z <- las@data$Z - min(las@data$Z)
 las <- las_update(las)
 
 las_norm <- normalize_height(las, dtm_rast)
-plot(las_norm)
+# plot(las_norm)
 
 
-
+ext(las)
 # Slice
 
 slice_0_1 <- filter_poi(las_norm, Z >= 0 & Z < 1)
