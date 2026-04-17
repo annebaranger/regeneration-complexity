@@ -48,6 +48,8 @@ plot(rast(sum_arr[,,10]))
 
 
 ### Normalize netcdf ####
+#%%%%%%%%%%%%%%%%%%%%%%%%
+
 dim(sum_arr)
 nx <- dim(sum_arr)[2]
 ny <- dim(sum_arr)[1]
@@ -95,3 +97,8 @@ for (i in 1:nx) {
 
 plot(rast(sum_arr[6,,]))
 plot(rast(arr_norm[6,,]))
+
+plot(rast(arr_norm[,,1/dz]))
+
+
+#save(arr_norm,file=paste0(plot_name,"_rb.rdata"))

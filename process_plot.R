@@ -10,7 +10,7 @@ path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF pr
 path_folder=file.path(path_plot,
                       paste0(plot,"-processing"))
 path_trees=file.path(path_folder,"trees")
-subfolders=c("adults")#,"regen","hesitation","dead-incomplete","tree-parts")
+subfolders=c("adults","regen","hesitation","dead-incomplete","tree-parts")
 
 ### Create one point cloud ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -43,22 +43,28 @@ las <- clip_rectangle(las,
                       ybottom = ext(dtm_rast)$ymin,
                       xright  = ext(dtm_rast)$xmax,
                       ytop    = ext(dtm_rast)$ymax)
-las@data$X <- las@data$X - min(las@data$X)
-las@data$Y <- las@data$Y - min(las@data$Y)
-las@data$Z <- las@data$Z - min(las@data$Z)
-las <- las_update(las)
-
 las_norm <- normalize_height(las, dtm_rast)
-# plot(las_norm)
 
+las_norm@data$X <- floor((las_norm@data$X - min(las_norm@data$X))/0.25)
+las_norm@data$Y <- floor((las_norm@data$Y - min(las_norm@data$Y))/0.25)
+# las@data$Z <- las@data$Z - min(las@data$Z)
+las_norm <- las_update(las_norm)
 
-ext(las)
+# save(las_norm,file=paste0(plot_name,"_pc.rdata"))
+
 # Slice
+load("GER02_rb.rdata")
+plot(rast(arr_norm[,,3/0.25]))
 
-slice_0_1 <- filter_poi(las_norm, Z >= 0 & Z < 1)
+
+slice_0_1 <- filter_poi(las_norm, Z >= 0 & Z < 3)
 plot(slice_0_1)
-slice_0_1_chm <- rasterize_canopy(slice_0_1, res = 0.05, algorithm = p2r())
+slice_0_1_chm <- rasterize_canopy(slice_0_1, res = 0.0625, algorithm = p2r())
 plot(slice_0_1_chm)
+as.data.frame(rast(arr_norm[,,3/0.25]),xy=TRUE)
+as.data.frame(slice_0_1_chm,xy=TRUE)
+
+
 slice_1_2 <- filter_poi(las, Z >= 1 & Z < 2)
 plot(slice_1_2)
 slice_2_3 <- filter_poi(las, Z >= 2 & Z < 3)
