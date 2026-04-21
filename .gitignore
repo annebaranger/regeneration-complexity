@@ -2,3 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+output/
+_targets/
+*.rdata
+fig/
