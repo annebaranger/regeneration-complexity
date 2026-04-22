@@ -1,24 +1,69 @@
 library(targets)
-# library(tarchetypes)
+library(tarchetypes)
 tar_source(files = "R")
-tar_option_set(packages = c("dplyr", "ggplot2","data.table",
-                            "ncdf4", "terra",
+tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
+                            "ncdf4", "terra","sf",
                             "lidR","ITSMe"))
 
+plot_values <- tibble::tibble(
+  plot_name = c("GER02", "GER01")   # <-- add all your plots here
+)
 list(
+  # Static targets (run once) ─────────────────────────────────────────────────
   tar_target(user, "Anne"),
   tar_target(path_plot,
-             paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")),
+             paste0("C:/Users/", user, "/OneDrive - University of Cambridge/2. FLF project")),
   tar_target(dart_folder,
-             paste0("C:/Users/",user,"/DART-1/user_data/simulations")),
-  tar_target(rb,
-             get_rb(dart_folder,
-                    plot_name="GER02",
-                    hours=c(8,10,12,14,16,18)),
+             paste0("C:/Users/", user, "/DART-1/user_data/simulations")),
+  
+  # Mapped targets (run once per plot) ────────────────────────────────────────
+  tar_map(
+    values = plot_values,      # iterates over plot_name
+    names  = plot_name,        # used as suffix in target names e.g. rb_GER02
+    
+    tar_target(rb,
+               get_rb(dart_folder,
+                      plot_name = plot_name,
+                      hours     = c(8, 10, 12, 14, 16, 18)),
+               format = "file"),
+    
+    tar_target(rb_norm,
+               normalize_rb(plot_name = plot_name,
+                            user,
+                            rb_path = rb[1],
+                            rb_type = "sum"),
+               format = "file"),
+    
+    tar_target(pc_norm,
+               get_pc_norm(plot_name = plot_name,
+                           user),
+               format = "file"),
+    
+    tar_target(subplot_extent,
+               get_subplot_extent(plot_name = plot_name,
+                                  user)),
+    
+    tar_target(metric3d_df,
+               get_complexity_rb(pc_norm,
+                                 rb_norm,
+                                 subplot_extent,
+                                 plot_name = plot_name,
+                                 nstrat    = 4))
+  ),
+  
+  # Combine all plots into one df at the end ───────────────────────────────── 
+  tar_combine(
+    metric3d_all,
+    tar_select_targets(metric3d_df),   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  # Analyse regeneration survey ───────────────────────────────── 
+  tar_target(regen_path,
+             "//ifs-prod-596-cifs.ifs.uis.private.cam.ac.uk/geog-forest/germany-2025/germany-regen/Regen_Fundiv_Germany_0825.xlsx",
              format="file"),
-  tar_target(rb_norm,
-             normalize_rb(plot_name="GER02",
-                          user,
-                          rb_path=rb[1],
-                          rb_type="sum"))
+  tar_target(regen_df,
+             readxl::read_excel(regen_path,sheet=3) %>%
+               dplyr::mutate(dplyr::across(6:13, as.numeric))),
+  tar_target(regen_metrics,
+             get_regen_metric(regen_df))
 )
