@@ -3,21 +3,18 @@ library(tarchetypes)
 tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
                             "ncdf4", "terra","sf",
-                            "lidR","ITSMe"))
+                            "lidR","ITSMe"),
+               error = "null")
+# lapply(c("targets",
+#          "dplyr", "ggplot2","data.table","tidyr",
+#          "ncdf4", "terra","sf",
+#          "lidR","ITSMe"),require,character.only=TRUE)
 
 plot_values <- tibble::tibble(
-  plot_name = c("GER02", "GER01")   # <-- add all your plots here
+  plot_name = c("GER02", "GER01","GER06","GER09")   # <-- add all your plots here
 )
-list(
-  # Static targets (run once) ─────────────────────────────────────────────────
-  tar_target(user, "Anne"),
-  tar_target(path_plot,
-             paste0("C:/Users/", user, "/OneDrive - University of Cambridge/2. FLF project")),
-  tar_target(dart_folder,
-             paste0("C:/Users/", user, "/DART-1/user_data/simulations")),
-  
-  # Mapped targets (run once per plot) ────────────────────────────────────────
-  tar_map(
+# Mapped targets (run once per plot) ────────────────────────────────────────
+mapped<-tar_map(
     values = plot_values,      # iterates over plot_name
     names  = plot_name,        # used as suffix in target names e.g. rb_GER02
     
@@ -38,7 +35,9 @@ list(
                get_pc_norm(plot_name = plot_name,
                            user),
                format = "file"),
-    
+    tar_target(xyoffset,
+               get_plot_offset(plot_name=plot_name,
+                               user)),
     tar_target(subplot_extent,
                get_subplot_extent(plot_name = plot_name,
                                   user)),
@@ -46,15 +45,23 @@ list(
     tar_target(metric3d_df,
                get_complexity_rb(pc_norm,
                                  rb_norm,
+                                 xyoffset,
                                  subplot_extent,
                                  plot_name = plot_name,
                                  nstrat    = 4))
-  ),
-  
-  # Combine all plots into one df at the end ───────────────────────────────── 
+  )
+list(
+  # Static targets (run once) ─────────────────────────────────────────────────
+  tar_target(user, "Anne"),
+  tar_target(path_plot,
+             paste0("C:/Users/", user, "/OneDrive - University of Cambridge/2. FLF project")),
+  tar_target(dart_folder,
+             paste0("C:/Users/", user, "/DART-1/user_data/simulations")),
+  # Combine all plots into one df at the end ─────────────────────────────────
+  mapped, 
   tar_combine(
     metric3d_all,
-    tar_select_targets(metric3d_df),   # grabs metric3d_df_GER02, _GER20, etc.
+    mapped[["metric3d_df"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
   ),
   # Analyse regeneration survey ───────────────────────────────── 

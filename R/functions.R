@@ -153,6 +153,20 @@ get_pc_norm<-function(plot_name,
   return(path_las)
 }
 
+
+get_plot_offset<-function(plot_name,
+                          user){
+  path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
+  path_folder=file.path(path_plot,
+                        paste0(plot_name,"-processing"))
+  dtm_rast <- rast(file.path(path_folder,
+                             list.files(path_folder,pattern="dtm.tif")))
+  xoffset=ext(dtm_rast)$xmin
+  yoffset=ext(dtm_rast)$ymin
+  return(c(xoffset,yoffset))
+}
+
+
 get_subplot_extent<-function(plot_name,
                              user){
   path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
@@ -163,7 +177,8 @@ get_subplot_extent<-function(plot_name,
   subplot_files=list.files(path_trees,pattern="subplot")
   
   list_hull <- vector("list", length(subplot_files))
-  names(list_hull) <- paste0("subplot_",1:length(subplot_files))
+  names(list_hull) <- lapply(subplot_files,function(x) substr(x,1,nchar(x)-4))
+  
   for(f in  seq_along(subplot_files)){
     subplot=fread(file=file.path(path_trees,
                                  subplot_files[f]))[,1:3]
@@ -178,6 +193,7 @@ get_subplot_extent<-function(plot_name,
 
 get_complexity_rb<-function(pc_norm,
                             rb_norm,
+                            xyoffset,
                             subplot_extent,
                             plot_name,
                             nstrat=4){
@@ -259,11 +275,12 @@ get_complexity_rb<-function(pc_norm,
     ### do the same for subplots
     for(sp in seq_along(subplot_extent)){
       plot_ext=subplot_extent[[sp]]
-      pc_sub_slice_chm=crop(pc_slice_chm,vect(subplot_extent[[sp]]))
-      rb_sub_slice_matched=crop(rb_slice_matched,vect(subplot_extent[[sp]]))
-      rb_sub_slice_matched_mask=crop(rb_slice_matched_mask,vect(subplot_extent[[sp]]))
-      
-      
+      plot_ext_trans <- shift(vect(plot_ext), 
+                              dx = -xyoffset[[1]], 
+                              dy =-xyoffset[[2]])
+      pc_sub_slice_chm=crop(pc_slice_chm,plot_ext_trans)
+      rb_sub_slice_matched=crop(rb_slice_matched,plot_ext_trans)
+      rb_sub_slice_matched_mask=crop(rb_slice_matched_mask,plot_ext_trans)
       
       ### height metrics
       h_mean_s=mean(values(pc_sub_slice_chm),na.rm=TRUE)
