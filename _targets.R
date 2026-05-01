@@ -11,13 +11,21 @@ tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
 #          "lidR","ITSMe"),require,character.only=TRUE)
 
 plot_values <- tibble::tibble(
-  plot_name = c("GER02", "GER01","GER06","GER09")   # <-- add all your plots here
+  plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14","GER18")   # <-- add all your plots here
 )
 # Mapped targets (run once per plot) ────────────────────────────────────────
 mapped<-tar_map(
     values = plot_values,      # iterates over plot_name
     names  = plot_name,        # used as suffix in target names e.g. rb_GER02
-    
+
+    tar_target(bbox,
+               get_bbox(plot_name=plot_name,
+                        user)),
+    tar_target(dtm,
+               get_dtm(plot_name=plot_name,
+                       user,
+                       bbox),
+               format="file"),
     tar_target(rb,
                get_rb(dart_folder,
                       plot_name = plot_name,
@@ -32,12 +40,10 @@ mapped<-tar_map(
                format = "file"),
     
     tar_target(pc_norm,
-               get_pc_norm(plot_name = plot_name,
-                           user),
+               get_pc_norm_clean(plot_name = plot_name,
+                                 user),
                format = "file"),
-    tar_target(xyoffset,
-               get_plot_offset(plot_name=plot_name,
-                               user)),
+
     tar_target(subplot_extent,
                get_subplot_extent(plot_name = plot_name,
                                   user)),

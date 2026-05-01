@@ -123,3 +123,16 @@ metric3d_all %>%
   facet_wrap(~name,scale="free_x",ncol=3)+
   theme_bw()+
   labs(color="Height slice",x="Radiative budget metric or Structural metric",y="")
+
+
+
+metric3d_all %>% 
+  select(plot,subplot,slice_num,rb_mean,rb_sd,rb_cv) %>% 
+  filter(slice_num%in%c(1,4)) %>% 
+  left_join(regen_ext %>% 
+              pivot_wider(names_from = name,values_from = value) %>% 
+              select(-slice_num),by=c("plot","subplot")) %>% 
+  ggplot(aes(rb_mean,richness))+
+  geom_point(aes(color=plot))+
+  geom_smooth(method="lm")+
+  facet_wrap(~slice_num,scale="free")

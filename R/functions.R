@@ -1,9 +1,107 @@
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#
+#### SCRIPT INTRODUCTION ####
+#
+#' @name functions.R  
+#' @description R script containing all functions relative to data
+#               processing
+#' @author Anne Baranger
+#
+#
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+#### ESSENTIAL FUNCTIONS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+#' Load Rdata file into a defined object
+#' @param fileName n
 loadRData <- function(fileName){
   #loads an RData file, and returns it
   load(fileName)
   get(ls()[ls() != "fileName"])
 }
 
+
+#### PLOT DESCRIPTORS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%
+
+#' Create a bounding box of plot of interest, based on measures used in AMAPVox
+#' @param plot_name
+#' @param user user name for path 
+get_bbox<-function(plot_name,
+                   user){
+  path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
+  path_folder=file.path(path_plot,
+                        paste0(plot_name,"-processing"))
+  bbox_df=read.table(file.path(path_folder,
+                               list.files(path_folder,pattern="bbox")),
+                     sep="",header=F)
+  bbox=list(xmin=bbox_df[1,2],xmax=bbox_df[1,3],
+            ymin=bbox_df[2,2],ymax=bbox_df[2,3])
+  return(bbox)
+}
+
+#' Load DTM and crop it to the accurate size
+#' @param name description
+get_dtm <-function(plot_name,
+                   user,
+                   bbox){
+  path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
+  path_folder=file.path(path_plot,
+                        paste0(plot_name,"-processing"))
+  
+  # look for dtm file
+  dtm_file=if_else(file.exists(file.path(path_folder,
+                                         paste0(plot_name,"_dtm_bis.tif"))), # check if dtm was refined
+                   file.path(path_folder,
+                             paste0(plot_name,"_dtm_bis.tif")), # if so, chose refined file
+                   file.path(path_folder,
+                             paste0(plot_name,"_dtm.tif")) # if not, chose original dtm file
+                   
+  )
+  # laod dtm file
+  dtm_rast <- rast(dtm_file)
+  
+  dtm_rast<- crop(dtm_rast,
+                  ext(bbox$xmin, bbox$xmax, bbox$ymin, bbox$ymax),
+                  ext=TRUE)
+  return(dtm_rast)
+}
+
+
+
+#' Get the extent of the subplots
+#' @param plot_name plot name
+#' @param user user
+get_subplot_extent<-function(plot_name,
+                             user){
+  path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
+  path_folder=file.path(path_plot,
+                        paste0(plot_name,"-processing"))
+  path_trees=file.path(path_folder,"trees")
+  
+  subplot_files=list.files(path_trees,pattern="subplot")
+  
+  list_hull <- vector("list", length(subplot_files))
+  names(list_hull) <- lapply(subplot_files,function(x) substr(x,1,nchar(x)-4))
+  
+  for(f in  seq_along(subplot_files)){
+    subplot=fread(file=file.path(path_trees,
+                                 subplot_files[f]))[,1:3]
+    colnames(subplot)=c("X","Y","Z")  
+    subplot=LAS(subplot)
+    
+    list_hull[f]=st_convex_hull(subplot)
+  }
+  
+  return(list_hull)
+}
+
+#### RADIATIVE BUDGET ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%
 
 get_rb<-function(dart_folder,
                  plot_name,
@@ -102,7 +200,11 @@ normalize_rb<-function(plot_name,
   return(path_rast_norm)
 }
 
-get_pc_norm<-function(plot_name,
+#### POINT CLOUD ####
+#%%%%%%%%%%%%%%%%%%%%
+
+
+get_pc_norm_trees<-function(plot_name,
                       user,
                       subfolders=c("adults","regen","hesitation","dead-incomplete","tree-parts")
 ){
@@ -111,8 +213,8 @@ get_pc_norm<-function(plot_name,
                         paste0(plot_name,"-processing"))
   path_trees=file.path(path_folder,"trees")
 
-  ### Create one point cloud ####
-  #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  ### Create one point cloud 
+  #%%%%%%%%%%%%%%%%%%%%%%%%%%
   txt_list=c()
   for (subf in subfolders){
     if(subf!="dead-incomplete"){
@@ -132,8 +234,8 @@ get_pc_norm<-function(plot_name,
   las <- LAS(do.call(rbind, cloud_list))
   rm(cloud_list)
   
-  ### DTM LAS ####
-  #%%%%%%%%%%%%%%%
+  ### DTM LAS 
+  #%%%%%%%%%%%
   dtm_rast <- rast(file.path(path_folder,
                              list.files(path_folder,pattern="dtm.tif")))
   las <- clip_rectangle(las,
@@ -154,42 +256,47 @@ get_pc_norm<-function(plot_name,
 }
 
 
-get_plot_offset<-function(plot_name,
-                          user){
+get_pc_norm_clean<-function(plot_name,
+                            user,
+                            bbox,
+                            dtm){
   path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
   path_folder=file.path(path_plot,
                         paste0(plot_name,"-processing"))
-  dtm_rast <- rast(file.path(path_folder,
-                             list.files(path_folder,pattern="dtm.tif")))
-  xoffset=ext(dtm_rast)$xmin
-  yoffset=ext(dtm_rast)$ymin
-  return(c(xoffset,yoffset))
+
+  # load cleaned and denoised point cloud
+  f=file.path(path_folder,
+              list.files(path_folder,pattern="clean.las"))
+  pc=readLAS(f)
+  las <- clip_rectangle(pc,
+                        xleft   = bbox$xmin,
+                        ybottom = bbox$ymin,
+                        xright  = bbox$xmax,
+                        ytop    = bbox$ymax)
+  
+  # load dtm 
+  dtm_rast <- loadRData(dtm)
+  
+  # normalize pc height
+  las_norm <- normalize_height(las, dtm_rast)
+  
+  las_norm@data$X <- las_norm@data$X - min(las_norm@data$X)
+  las_norm@data$Y <- las_norm@data$Y - min(las_norm@data$Y)
+  
+  las_norm <- las_update(las_norm)
+  
+  las_clip <- filter_poi(las_norm, Z < 5)
+  
+  path_las=paste0("output/",plot_name,"_pcnorm.rdata")
+  save(las_clip,file=path_las)
+  return(path_las)
 }
 
 
-get_subplot_extent<-function(plot_name,
-                             user){
-  path_plot=paste0("C:/Users/",user,"/OneDrive - University of Cambridge/2. FLF project")
-  path_folder=file.path(path_plot,
-                        paste0(plot_name,"-processing"))
-  path_trees=file.path(path_folder,"trees")
-  
-  subplot_files=list.files(path_trees,pattern="subplot")
-  
-  list_hull <- vector("list", length(subplot_files))
-  names(list_hull) <- lapply(subplot_files,function(x) substr(x,1,nchar(x)-4))
-  
-  for(f in  seq_along(subplot_files)){
-    subplot=fread(file=file.path(path_trees,
-                                 subplot_files[f]))[,1:3]
-    colnames(subplot)=c("X","Y","Z")  
-    subplot=LAS(subplot)
-    
-    list_hull[f]=st_convex_hull(subplot)
-  }
-  
-  return(list_hull)
-}
+
+
+
+
 
 get_complexity_rb<-function(pc_norm,
                             rb_norm,
@@ -236,7 +343,7 @@ get_complexity_rb<-function(pc_norm,
     
     
     ### metric at the plot scale for light
-    rb_slice=rast(apply(rb_norm[,,(slice_low/0.254):(slice_up/0.25)], c(1, 2), sum))
+    rb_slice=rast(apply(rb_norm[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
     ext(rb_slice)  <- ext(pc_slice_chm)
     crs(rb_slice)  <- crs(pc_slice_chm)
     rb_slice_matched <- resample(rb_slice, pc_slice_chm, method = "bilinear")
