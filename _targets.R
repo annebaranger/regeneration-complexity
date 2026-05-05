@@ -1,9 +1,11 @@
 library(targets)
 library(tarchetypes)
+library(crew)
 tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
                             "ncdf4", "terra","sf",
                             "lidR","ITSMe"),
+               controller = crew_controller_local(workers = 6),
                error = "null")
 # lapply(c("targets",
 #          "dplyr", "ggplot2","data.table","tidyr",
@@ -11,7 +13,7 @@ tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
 #          "lidR","ITSMe"),require,character.only=TRUE)
 
 plot_values <- tibble::tibble(
-  plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14","GER18")   # <-- add all your plots here
+  plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14","GER18","GER19","GER20")   # <-- add all your plots here
 )
 # Mapped targets (run once per plot) ────────────────────────────────────────
 mapped<-tar_map(
@@ -26,24 +28,29 @@ mapped<-tar_map(
                        user,
                        bbox),
                format="file"),
+    tar_target(simu_time,
+               get_simulation_time(dart_folder,
+                                   plot_name)),
     tar_target(rb,
                get_rb(dart_folder,
                       plot_name = plot_name,
-                      hours     = c(8, 10, 12, 14, 16, 18)),
+                      hours     = simu_time),
                format = "file"),
     
     tar_target(rb_norm,
                normalize_rb(plot_name = plot_name,
                             user,
-                            rb_path = rb[1],
-                            rb_type = "sum"),
+                            rb_path = rb,
+                            bbox,
+                            dtm),
                format = "file"),
     
     tar_target(pc_norm,
                get_pc_norm_clean(plot_name = plot_name,
-                                 user),
+                                 user,
+                                 bbox,
+                                 dtm),
                format = "file"),
-
     tar_target(subplot_extent,
                get_subplot_extent(plot_name = plot_name,
                                   user)),
@@ -51,7 +58,7 @@ mapped<-tar_map(
     tar_target(metric3d_df,
                get_complexity_rb(pc_norm,
                                  rb_norm,
-                                 xyoffset,
+                                 bbox,
                                  subplot_extent,
                                  plot_name = plot_name,
                                  nstrat    = 4))

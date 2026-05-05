@@ -136,3 +136,53 @@ metric3d_all %>%
   geom_point(aes(color=plot))+
   geom_smooth(method="lm")+
   facet_wrap(~slice_num,scale="free")
+
+
+# evolution of radiative budget throughout the day and the plot/subplots
+summary_plot=tar_read(metric3d_df_GER11)
+
+summary_plot %>% 
+  ggplot(aes(time,rb_mean,color=as.factor(slice_num)))+
+  geom_point()+
+  geom_line()+
+  facet_wrap(~subplot)+
+  scale_x_continuous(breaks=seq(8, 18, 1))
+
+
+
+
+# check the light distribution for subplot 1
+pc_norm=loadRData(tar_read(pc_norm_GER11))
+list_rb=loadRData(tar_read(rb_norm_GER11))
+bbox=tar_read(bbox_GER11)
+subplot_extent=tar_read(subplot_extent_GER11)
+plot_name="GER11"
+
+
+rb_norm=list_rb[[3]]
+pc_slice_chm <- rasterize_canopy(pc_norm, res = 0.1, algorithm = p2r())
+slice_list = seq(from = 0.5, by = 1, length.out = 5)
+list_g=vector("list",length=4)
+list_s=vector("list",length=4)
+for(i in 1:4){
+  slice_low=slice_list[i]
+  slice_up=slice_list[i+1]
+  rb_slice=rast(apply(rb_norm[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
+  ext(rb_slice)  <- ext(pc_slice_chm)
+  crs(rb_slice)  <- crs(pc_slice_chm)
+  rb_slice_matched <- resample(rb_slice, pc_slice_chm, method = "bilinear")
+  names(rb_slice_matched)="rb"
+  rb_slice_matched[rb_slice_matched<quantile(values(rb_slice_matched),
+                                             na.rm=TRUE,probs=0.005)] <-NA
+  plot_ext=subplot_extent$subplot_1
+  plot_ext_trans <- shift(vect(plot_ext), 
+                          dx = -bbox$xmin, 
+                          dy = -bbox$ymin)
+  pc_sub_slice_chm=crop(pc_slice_chm,plot_ext_trans)
+  rb_sub_slice_matched=crop(rb_slice_matched,plot_ext_trans)
+  
+  list_g[[i]]=ggplot() +
+    geom_spatraster(data = rb_slice_matched, aes(fill = rb)) 
+  list_s[[i]]=ggplot() +
+    geom_spatraster(data = rb_sub_slice_matched, aes(fill = rb))
+}
