@@ -163,7 +163,6 @@ get_rb<-function(dart_folder,
   return(path_rb)
 }
 
-
 normalize_rb<-function(plot_name,
                        user,
                        rb_path,
@@ -180,6 +179,7 @@ normalize_rb<-function(plot_name,
   for(r in seq_along(list_rb)){
     rb=list_rb[[r]]
     
+    #get number of voxels
     nx <- dim(rb)[2]
     ny <- dim(rb)[1]
     nz <- dim(rb)[3]
@@ -187,7 +187,7 @@ normalize_rb<-function(plot_name,
     
     xmin_vox <- ext(dtm_rast)[1]
     ymin_vox <- ext(dtm_rast)[3]
-    zmin_vox <- min(dtm_rast)
+    # zmin_vox <- min(values(dtm_rast))
     
     dx <- 0.25
     dy <- 0.25
@@ -195,6 +195,16 @@ normalize_rb<-function(plot_name,
     
     x_centers <- xmin_vox + (0:(nx - 1)) * dx + dx / 2
     y_centers <- ymin_vox + (0:(ny - 1)) * dy + dy / 2
+    
+    # check if dtm extent is too small, and replace highest value with max extent
+    x_max <- ext(dtm_rast)[2][[1]]
+    y_max <- ext(dtm_rast)[4][[1]]
+    for (i in length(x_centers):1) {
+      if (x_centers[i] > x_max) x_centers[i] <- x_max else break
+    }
+    for (i in length(y_centers):1) {
+      if (y_centers[i] > y_max) y_centers[i] <- y_max else break
+    }
     
     xy <- expand.grid(x = x_centers, y = y_centers)
     
@@ -320,7 +330,12 @@ get_pc_norm_clean<-function(plot_name,
 }
 
 
-
+# pc_norm=tar_read(pc_norm_GER13)
+# rb_norm=tar_read(rb_norm_GER13)
+# bbox=tar_read(bbox_GER13)
+# subplot_extent=tar_read(subplot_extent_GER13)
+# plot_name="GER13"
+# nstrat=4
 get_complexity_rb<-function(pc_norm,
                             rb_norm,
                             bbox,
@@ -462,8 +477,11 @@ get_complexity_rb<-function(pc_norm,
                              rb_sub_slice_matched),xy=TRUE,
                            na.rm=TRUE) %>% 
           filter(Z<(slice_up-0.01))
-        reglin_s=lm(rb~Z,data=df_s)
-        coef_s = reglin_s$coefficients["Z"][[1]]
+        if(dim(df_s)[1]>3){
+          reglin_s=lm(rb~Z,data=df_s)
+          coef_s = reglin_s$coefficients["Z"][[1]]
+        }else{coef_s=NA}
+        
         
         
         summary_plot[nrow(summary_plot) + 1, ] <- list(
@@ -480,9 +498,15 @@ get_complexity_rb<-function(pc_norm,
   return(summary_plot)
 }
 
-get_regen_metric<-function(regen_df){
+
+### REGENERATION METRICS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+# Get regeneration metrics at the subplot level
+#' @param regen_df table of the data from the field
+get_regen_metric_subplot<-function(regen_df){
   general_df <- regen_df %>%
-    group_by(Plot, Subplot) %>%
+    group_by(plot, subplot) %>%
     summarise(
       richness     = n_distinct(Species),
       abundance    = sum(as.numeric(Count), na.rm = TRUE),
@@ -490,13 +514,13 @@ get_regen_metric<-function(regen_df){
     )
   
   var_df <- regen_df %>%
-    group_by(Plot, Subplot, Quadrat) %>%
+    group_by(plot, subplot, Quadrat) %>%
     summarise(
       richness  = n_distinct(Species),
       abundance = sum(as.numeric(Count), na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    group_by(Plot, Subplot) %>%
+    group_by(plot, subplot) %>%
     summarise(
       richness_sd  = sd(richness),
       abundance_cv = sd(abundance) / mean(abundance),
@@ -505,9 +529,9 @@ get_regen_metric<-function(regen_df){
   
   shannon_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
-    group_by(Plot, Subplot, Species) %>%
+    group_by(plot, subplot, Species) %>%
     summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
-    group_by(Plot, Subplot) %>%
+    group_by(plot, subplot) %>%
     mutate(
       abundance_tot = sum(abundance),
       p = (abundance / abundance_tot) * log(abundance / abundance_tot)
@@ -516,13 +540,18 @@ get_regen_metric<-function(regen_df){
   
   browsing_df <- regen_df %>%
     filter(Hclass > 1) %>%
-    group_by(Plot, Subplot) %>%
+    group_by(plot, subplot) %>%
     summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
   
   seedling_df <- regen_df %>%
     filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
-    group_by(Plot, Subplot) %>%
+    group_by(plot, subplot) %>%
     summarise(n_seedling = sum(Count), .groups = "drop")
+  
+  sapling_df <- regen_df %>%
+    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
+    group_by(plot, subplot) %>%
+    summarise(n_sapling = sum(Count), .groups = "drop")
   
   growth_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
@@ -531,19 +560,19 @@ get_regen_metric<-function(regen_df){
       (Height_increment_1 + Height_increment_2) / 2,
       Height_increment_1
     )) %>%
-    group_by(Plot, Subplot, Species) %>%
+    group_by(plot, subplot, Species) %>%
     summarise(
       Height_increment_mn = mean(Height_increment, na.rm = TRUE),
       Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
       .groups = "drop"
     )
   
-  # ── Tables at Plot/Subplot/Hclass level → pivot wide before joining ──────────
+  # ── Tables at plot/subplot/Hclass level → pivot wide before joining ──────────
   shannon_size_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
-    group_by(Plot, Subplot, Species, Hclass) %>%
+    group_by(plot, subplot, Species, Hclass) %>%
     summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
-    group_by(Plot, Subplot, Hclass) %>%
+    group_by(plot, subplot, Hclass) %>%
     mutate(
       abundance_tot = sum(abundance),
       p = (abundance / abundance_tot) * log(abundance / abundance_tot)
@@ -558,7 +587,7 @@ get_regen_metric<-function(regen_df){
       (Height_increment_1 + Height_increment_2) / 2,
       Height_increment_1
     )) %>%
-    group_by(Plot, Subplot, Species, Hclass) %>%
+    group_by(plot, subplot, Species, Hclass) %>%
     summarise(
       Height_increment_mn = mean(Height_increment, na.rm = TRUE),
       Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
@@ -570,13 +599,124 @@ get_regen_metric<-function(regen_df){
       names_sep   = "_hclass"
     )
   
-  # ── Final join at Plot/Subplot ────────────────────────────────────────────────
+  # ── Final join at plot/subplot ────────────────────────────────────────────────
   final_df <- general_df %>%
-    left_join(var_df,          by = c("Plot", "Subplot")) %>%
-    left_join(shannon_df,      by = c("Plot", "Subplot")) %>%
-    left_join(browsing_df,     by = c("Plot", "Subplot")) %>%
-    left_join(seedling_df,     by = c("Plot", "Subplot")) %>%
-    left_join(shannon_size_df, by = c("Plot", "Subplot")) %>%
-    left_join(growth_size_df,  by = c("Plot", "Subplot"))
+    left_join(var_df,          by = c("plot", "subplot")) %>%
+    left_join(shannon_df,      by = c("plot", "subplot")) %>%
+    left_join(browsing_df,     by = c("plot", "subplot")) %>%
+    left_join(seedling_df,     by = c("plot", "subplot")) %>%
+    left_join(sapling_df,     by = c("plot", "subplot")) %>%
+    left_join(shannon_size_df, by = c("plot", "subplot")) %>%
+    left_join(growth_size_df,  by = c("plot", "subplot"))
+  return(final_df)
+}
+
+# Get regeneration metrics at the plot level
+#' @param regen_df table of the data from the field
+
+get_regen_metric_plot<-function(regen_df){
+  general_df <- regen_df %>%
+    group_by(plot) %>%
+    summarise(
+      richness     = n_distinct(Species),
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  var_df <- regen_df %>%
+    group_by(plot, subplot) %>%
+    summarise(
+      richness  = n_distinct(Species),
+      abundance = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(plot) %>%
+    summarise(
+      richness_sd  = sd(richness),
+      abundance_cv = sd(abundance) / mean(abundance),
+      .groups = "drop"
+    )
+  
+  shannon_df <- regen_df %>%
+    filter(!is.na(as.numeric(Count))) %>%
+    group_by(plot, Species) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop")
+  
+  browsing_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
+  seedling_df <- regen_df %>%
+    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
+    group_by(plot) %>%
+    summarise(n_seedling = sum(Count), .groups = "drop")
+  
+  sapling_df <- regen_df %>%
+    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
+    group_by(plot) %>%
+    summarise(n_sapling = sum(Count), .groups = "drop")
+  
+  growth_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, Species) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
+  # ── Tables at plot/Hclass level → pivot wide before joining ──────────
+  shannon_size_df <- regen_df %>%
+    filter(!is.na(as.numeric(Count))) %>%
+    group_by(plot, Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, Hclass) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop") %>%
+    pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
+  
+  growth_size_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, Species, Hclass) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from  = Hclass,
+      values_from = c(Height_increment_mn, Height_increment_cv),
+      names_sep   = "_hclass"
+    )
+  
+  # ── Final join at plot/subplot ────────────────────────────────────────────────
+  final_df <- general_df %>%
+    left_join(var_df,          by = "plot") %>%
+    left_join(shannon_df,      by = "plot") %>%
+    left_join(browsing_df,     by = "plot") %>%
+    left_join(seedling_df,     by = "plot") %>%
+    left_join(sapling_df,     by = "plot") %>%
+    left_join(shannon_size_df, by = "plot") %>%
+    left_join(growth_size_df,  by = "plot")
   return(final_df)
 }

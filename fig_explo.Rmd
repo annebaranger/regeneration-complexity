@@ -1,0 +1,351 @@
+---
+title: "Figures exploration"
+author: "Anne Baranger"
+date: "2026-05-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE,message=FALSE)
+library(targets)
+lapply(c("stringr","tidyr","dplyr","tibble", # data analysis
+         "ggplot2","viridis", "ggridges","wesanderson",# plot
+         "factoextra", "nlme","modi","rstan","shinystan",# stat & models
+         "rworldmap" # geographic data #terre, sf
+         ),require,character.only=TRUE)
+theme_set(theme_bw()) # ggplot theme
+common_theme <- theme(
+  # legend.position = "none",
+  strip.background = element_rect(fill = "white",
+                                        colour = "gray12"),
+  panel.background = element_rect(fill = "white",
+                                  colour = "gray12",
+                                  size = 0.5, linetype = "solid"),
+  plot.title = element_text(size = 12),
+  axis.title = element_text(size = 10),
+  axis.text = element_text(size = 10),
+  strip.text = element_text(size =10),
+  plot.margin = unit(c(0, 0.2, 0, 0.2), "cm")  # Example margin; adjust as needed
+)
+
+loadRData <- function(fileName){
+  #loads an RData file, and returns it
+  load(fileName)
+  get(ls()[ls() != "fileName"])
+}
+
+```
+
+# Data preparation 
+
+## Loading classic data. 
+
+```{r}
+tar_load(metric3d_all)
+tar_load(regen_metrics_plot)
+tar_load(regen_metrics_subplot)
+
+
+metric3d_all %>% 
+  select(plot,time) %>% 
+  unique() %>% group_by(plot) %>% 
+  summarise(`Number of simulated time slots`=n())
+
+metric3d_all %>% 
+  select(plot,subplot) %>% 
+  unique() %>% group_by(plot) %>% 
+  summarise(`Number of subplots`=n()-1)
+
+```
+
+## Get metrics at the plot level 
+
+```{r}
+metric3d_all_plot=metric3d_all %>% 
+  filter(subplot=="plot") %>% 
+  pivot_longer(cols =  c(matches("h_"),"coef_lin")) 
+
+```
+
+ 
+
+# Exploration of complexity measures 
+
+```{r}
+metric3d_all %>% 
+  filter(subplot!="plot") %>% 
+  pivot_longer(cols = c(matches("h_"),"coef_lin")) %>% 
+  ggplot(aes(slice_num,value,color=plot))+
+  geom_line(aes(group=interaction(plot,subplot)),alpha = 0.4)+
+  geom_point(data=metric3d_all_plot,aes(slice_num,value,color=plot))+
+  geom_line(data=metric3d_all_plot,aes(slice_num,value,color=plot,group=interaction(plot,subplot)))+
+  facet_grid(name~plot,scale="free_y")+
+  theme_bw()
+
+
+metric3d_all_plot
+metric3d_all %>% 
+  filter(subplot!="plot") %>% 
+  filter(time==12) %>% 
+  ggplot(aes(h_mean,h_sd,color=time))+
+  geom_point(aes(group=interaction(time,subplot)),alpha = 0.4)+
+  geom_line(aes(group=interaction(time,subplot)),alpha = 0.4)+
+  geom_point(data=metric3d_all %>% filter(subplot=="plot") %>% filter(time==12),
+             aes(h_mean,h_sd,color=time))+
+  geom_line(data=metric3d_all %>% filter(subplot=="plot") %>% filter(time==12),
+            aes(h_mean,h_sd,color=time,group=interaction(time,subplot)))+
+  facet_wrap(~plot,scale="free_y")+
+  theme_bw()
+```
+
+Main outcomes :
+* measure height without accounting for empty areas doesn't make sense. Drop variables "_na"
+* median doesn't make sense when accounting for empty areas, drop "h_med"
+* "coef_lin" is not informative
+* The shape of h_mean=f(slice_num) seems to provide insight on the understory structure. Linear form are more common for plots with less regeneration, while saturating form could be more common for dense understory
+
+# Exploration of field metrics
+
+## relevance of seedling number
+```{r}
+regen_metrics_subplot %>% 
+  ggplot(aes(abundance,n_seedling))+
+  geom_point()+
+  geom_abline(slope=1)+
+  labs(x="Total abundance",
+       y="Seedlings number (class 1 and 2)",
+       title="Subplot level")
+
+regen_metrics_plot %>% 
+  ggplot(aes(abundance,n_seedling))+
+  geom_point()+
+  geom_abline(slope=1)+
+  labs(x="Total abundance",
+       y="Seedlings number (class 1 and 2)",
+       title="Plot level")
+```
+Seedling number is highly correlated to total abundance at both subplot and plot level.
+
+## relevance of sapling number
+```{r}
+regen_metrics_subplot %>% 
+  ggplot(aes(abundance,n_sapling))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  labs(x="Total abundance",
+       y="Saplings number (class 1 and 2)",
+       title="Subplot level")
+
+regen_metrics_plot %>% 
+  ggplot(aes(abundance,n_sapling))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  labs(x="Total abundance",
+       y="Saplings number (class 1 and 2)",
+       title="Plot level")
+```
+
+
+## Browsing metrics
+```{r}
+regen_metrics_plot %>% 
+  select(-Species) %>% 
+  pivot_longer(cols=-c("plot","browsing")) %>% 
+  mutate(name=factor(name,levels = c("abundance","abundance_cv","n_seedling","richness","richness_sd",
+                                     "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
+                                     "Height_increment_cv_hclass2","Height_increment_cv_hclass3",
+                                     "H",
+                                     "H_hclass1","H_hclass2","H_hclass3","H_hclass4","H_hclass5"))) %>% 
+  ggplot(aes(browsing,value))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  facet_wrap(~name,scale="free_y",ncol=5)+
+  theme_bw()+
+  labs(title = "At the plot scale")
+
+
+
+regen_metrics_subplot %>% 
+  select(-Species) %>% 
+  pivot_longer(cols=-c("plot","subplot","browsing")) %>% 
+  mutate(name=factor(name,levels = c("abundance","abundance_cv","n_seedling","richness","richness_sd",
+                                     "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
+                                     "Height_increment_cv_hclass2","Height_increment_cv_hclass3",
+                                     "H",
+                                     "H_hclass1","H_hclass2","H_hclass3","H_hclass4","H_hclass5"))) %>% 
+  ggplot(aes(browsing,value))+
+  geom_point()+
+  geom_smooth(method="lm")+
+  facet_wrap(~name,scale="free_y",ncol=5)+
+  theme_bw()+
+  labs(title = "At the subplot scale")
+```
+Browsing reduces height increment, probably differs between species -> test it
+It probably reduces abundance, but this is uncertain. 
+Linked to higher richness and to higher sd in richness, at the plot scale.
+
+### by species
+```{r}
+regen_metrics_subplot %>% 
+  select(plot,browsing,Species,matches("Height")) %>% 
+  pivot_longer(cols=-c("plot","browsing","Species")) %>% 
+  mutate(name=factor(name,levels = c("Height_increment_mn_hclass2","Height_increment_mn_hclass3",
+                                     "Height_increment_cv_hclass2","Height_increment_cv_hclass3"))) %>% 
+  ggplot(aes(browsing,value,color=Species))+
+  geom_point()+
+  geom_smooth(method="gam",se=FALSE)+
+  facet_wrap(~name,scale="free_y",ncol=5)+
+  theme_bw()
+```
+Not clear. Plot not relevant at the plot scale.
+
+
+## Difference between plot scale and subplot scale
+
+```{r}
+
+
+regen_metrics_subplot %>%
+  left_join(
+    regen_metrics_plot %>% select(plot, H_plot = H, n_seedling_plot = n_seedling),
+    by = "plot"
+  ) %>%
+  ggplot(aes(color = plot)) +
+  # Lines connecting each subplot point to its plot-level point
+  geom_segment(aes(
+    x = n_seedling, y = H,
+    xend = n_seedling_plot, yend = H_plot
+  ), alpha = 0.4, linewidth = 0.4) +
+  # Subplot points (filled circles)
+  geom_point(aes(n_seedling, H)) +
+  # Plot-level points (triangles)
+  geom_point(aes(n_seedling, H_plot), size = 3)
+
+```
+# Exploration of radiative budget 
+
+## Radiative budget throughout the day
+```{r}
+nb_time=metric3d_all %>% select(plot,time) %>% group_by(plot) %>% summarise(ntime=n_distinct(time)) %>% 
+  filter(ntime>2) %>% pull(plot)
+
+metric3d_all %>% 
+  filter(plot %in% nb_time) %>% 
+  ggplot(aes(time,rb_mean,color=as.factor(slice_num)))+
+  geom_point()+
+  geom_line()+
+  facet_grid(plot~subplot)+
+  scale_x_continuous(breaks=seq(8, 18, 1))
+```
+12 or 13 is probably the maximum for rb at the plot scale.
+Huge variability though at the subplot scale. For GER11 two peaks corresponding to gaps of light coming into the subplot.
+
+
+# Link between light distribution and structure
+
+## Between heterogeneity of light and abundance/richness/H/brwosing
+
+```{r}
+reg_ext=regen_metrics_subplot %>% 
+  select(plot,subplot,richness,abundance,H,browsing) %>% unique() %>% 
+  pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val")
+
+
+reg_ext %>% 
+  left_join(metric3d_all %>% 
+              select(plot,subplot,slice_num,time,rb_sd) %>% 
+              filter(slice_num==1) %>% filter(time==12) %>% 
+              filter(subplot!="plot"),by=c("plot","subplot")) %>% 
+  ggplot(aes(rb_sd,y_val,col=plot))+
+  geom_point()+geom_smooth(aes(color=NULL),method="lm")+
+  facet_wrap(~y,scale="free_y",ncol=4)
+```
+
+```{r}
+regen_metrics_subplot %>% 
+  select(plot,subplot,richness,abundance,n_sapling,H,Height_increment_mn_hclass2) %>% 
+  group_by(plot,subplot) %>% 
+  summarise(across(everything(), \(x) mean(x, na.rm = TRUE)),
+            .groups = "drop") %>% 
+  pivot_longer(cols=-c("plot","subplot")) %>% 
+  mutate(slice_num=NA) %>% 
+  filter(plot%in%metric3d_all$plot)->regen_ext
+metric3d_all %>% 
+  select(plot,subplot,slice_num,rb_mean,rb_sd,rb_cv) %>% 
+  filter(slice_num%in%c(1,4)) %>% 
+  pivot_longer(cols=c("rb_mean","rb_sd","rb_cv")) %>% 
+  bind_rows(regen_ext) %>% 
+  mutate(name=factor(name,level=c("rb_mean","rb_sd","rb_cv",
+                                  "abundance","n_sapling","richness","H","Height_increment_mn_hclass2"))) %>% 
+  ggplot(aes(value,plot))+
+  geom_boxplot(aes(color=as.factor(slice_num)))+
+  facet_wrap(~name,scale="free_x",ncol=3)+
+  theme_bw()+
+  labs(color="Height slice",x="Radiative budget metric or Structural metric",y="")
+
+
+
+metric3d_all %>% 
+  select(plot,subplot,time,slice_num,rb_mean,rb_sd,rb_cv) %>% 
+  filter(slice_num%in%c(1,4)) %>% 
+  filter(!time%in%c(11,13,15)) %>% 
+  left_join(regen_ext %>% 
+              pivot_wider(names_from = name,values_from = value) %>% 
+              select(-slice_num),by=c("plot","subplot")) %>% 
+  ggplot(aes(rb_mean,richness))+
+  geom_point(aes(color=plot))+
+  geom_smooth(method="gam")+
+  facet_grid(time~slice_num,scale="free")+theme_bw()->p
+p
+```
+
+# ACP regen light - subplot
+
+```{r}
+regen_metrics_subplot %>% 
+  select(-matches("Height"),-H_hclass3,-H_hclass4,-H_hclass5,-Species) %>% 
+  unique() %>% 
+  mutate(n_sapling=case_when(is.na(n_sapling)~0,
+                             TRUE~n_sapling),
+         H_hclass1=case_when(is.na(H_hclass1)~0,
+                             TRUE~H_hclass1)) %>% 
+  left_join(metric3d_all %>% 
+              filter(subplot!="plot")%>% 
+              filter(time==12&slice_num==1) %>% 
+              select(plot,subplot,h_mean,h_sd,h_cv,rb_mean,rb_sd,rb_cv),
+            by=c("plot","subplot")) %>%
+  filter(plot%in%unique(metric3d_all$plot)) %>% 
+  select(-plot,-subplot)->pca_df
+
+library(factoextra)
+
+pca_df <- pca_df[sapply(pca_df, is.numeric)]
+pca_df <- na.omit(pca_df)
+
+# Run PCA (center and scale recommended)
+pca_res <- prcomp(pca_df, center = TRUE, scale. = TRUE)
+
+# Summary of variance explained
+summary(pca_res)
+
+# Correlation circle (variables factor map)
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE                   # avoid label overlap
+)
+
+
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE,                   # avoid label overlap
+  axes = c(1,3)
+)
+
+fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
+
+```
+

@@ -13,7 +13,9 @@ tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
 #          "lidR","ITSMe"),require,character.only=TRUE)
 
 plot_values <- tibble::tibble(
-  plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14","GER18","GER19","GER20")   # <-- add all your plots here
+  plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14",
+                "GER18","GER19","GER20","GER21","GER27","GER29","GER34","GER35",
+                "GER37","GER38")   # <-- add all your plots here
 )
 # Mapped targets (run once per plot) ────────────────────────────────────────
 mapped<-tar_map(
@@ -83,7 +85,12 @@ list(
              format="file"),
   tar_target(regen_df,
              readxl::read_excel(regen_path,sheet=3) %>%
-               dplyr::mutate(dplyr::across(6:13, as.numeric))),
-  tar_target(regen_metrics,
-             get_regen_metric(regen_df))
+               dplyr::mutate(dplyr::across(6:13, as.numeric)) %>% 
+               rename(plot=Plot,
+                      subplot=Subplot) %>% 
+               mutate(subplot=paste0("subplot_",subplot))),
+  tar_target(regen_metrics_subplot,
+             get_regen_metric_subplot(regen_df)),
+  tar_target(regen_metrics_plot,
+             get_regen_metric_plot(regen_df))
 )
