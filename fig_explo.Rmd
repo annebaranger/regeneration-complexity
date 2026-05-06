@@ -71,7 +71,7 @@ metric3d_all_plot=metric3d_all %>%
 
 # Exploration of complexity measures 
 
-```{r}
+```{r,fig.height=10,fig.width=10}
 metric3d_all %>% 
   filter(subplot!="plot") %>% 
   pivot_longer(cols = c(matches("h_"),"coef_lin")) %>% 
