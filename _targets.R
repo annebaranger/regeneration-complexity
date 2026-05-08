@@ -2,20 +2,20 @@ library(targets)
 library(tarchetypes)
 library(crew)
 tar_source(files = "R")
-tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
+tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl",
                             "ncdf4", "terra","sf",
                             "lidR","ITSMe"),
                controller = crew_controller_local(workers = 6),
                error = "null")
 # lapply(c("targets",
-#          "dplyr", "ggplot2","data.table","tidyr",
+#          "dplyr", "ggplot2","data.table","tidyr","readxl",
 #          "ncdf4", "terra","sf",
 #          "lidR","ITSMe"),require,character.only=TRUE)
 
 plot_values <- tibble::tibble(
   plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14",
                 "GER18","GER19","GER20","GER21","GER27","GER29","GER34","GER35",
-                "GER37","GER38")   # <-- add all your plots here
+                "GER37","GER38","GER32")   # <-- add all your plots here
 )
 # Mapped targets (run once per plot) ────────────────────────────────────────
 mapped<-tar_map(
@@ -79,7 +79,7 @@ list(
     mapped[["metric3d_df"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
   ),
-  # Analyse regeneration survey ───────────────────────────────── 
+  # Analyse regeneration survey ─────────────────────────────────────────────── 
   tar_target(regen_path,
              "//ifs-prod-596-cifs.ifs.uis.private.cam.ac.uk/geog-forest/germany-2025/germany-regen/Regen_Fundiv_Germany_0825.xlsx",
              format="file"),
@@ -92,5 +92,19 @@ list(
   tar_target(regen_metrics_subplot,
              get_regen_metric_subplot(regen_df)),
   tar_target(regen_metrics_plot,
-             get_regen_metric_plot(regen_df))
+             get_regen_metric_plot(regen_df)),
+  # Get inventory data
+  tar_target(inventory_path,
+             "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/germany-2025/regeneration-germany/Plot_descriptors_tree_data_Year2017_Inventory2_Germany.xls",
+             format="file"
+  ),
+  tar_target(inventory_df,
+             readxl::read_excel(inventory_path,sheet = "Raw data") %>% 
+               filter(PlotID %in% plot_values$plot_name) %>% 
+               rename(plot=PlotID) %>% 
+               dplyr::mutate(dplyr::across(c(2,3,6:15), as.numeric))
+               
+  ),
+  tar_target(plot_df,
+             get_adults(inventory_df))
 )

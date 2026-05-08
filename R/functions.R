@@ -329,7 +329,26 @@ get_pc_norm_clean<-function(plot_name,
   return(path_las)
 }
 
+get_gap_filling<-function(pc,voxel_size=0.25){
+  pc_vox=voxelize_points(pc,res=0.25)
+  occupied_voxels <- nrow(pc_vox)
+  
+  xrange <- range(pc@data$X)
+  yrange <- range(pc@data$Y)
+  zrange <- range(pc@data$Z)
+  
+  nx <- ceiling(diff(xrange) / voxel_size)
+  ny <- ceiling(diff(yrange) / voxel_size)
+  nz <- ceiling(diff(zrange) / voxel_size)
+  
+  total_voxels <- nx * ny * nz
+  empty_voxels <- total_voxels - occupied_voxels
+  
+  empty_prop <- empty_voxels / total_voxels
+  occupied_prop <- occupied_voxels / total_voxels
+  return(list(empty=empty_prop,occupied=occupied_prop))
 
+  }
 # pc_norm=tar_read(pc_norm_GER13)
 # rb_norm=tar_read(rb_norm_GER13)
 # bbox=tar_read(bbox_GER13)
@@ -361,6 +380,8 @@ get_complexity_rb<-function(pc_norm,
                           h_med=numeric(),
                           h_sd=numeric(),
                           h_cv=numeric(),
+                          empty_gf=numeric(),
+                          occupied_gf=numeric(),
                           rb_mean=numeric(),
                           rb_med=numeric(),
                           rb_sd=numeric(),
@@ -428,10 +449,14 @@ get_complexity_rb<-function(pc_norm,
       coef = reglin$coefficients["Z"][[1]]
       
       
+      ## gap filling
+      gap_filling=get_gap_filling(pc_slice,voxel_size = 0.25)
+      
       summary_plot[nrow(summary_plot) + 1, ] <- list(
         plot_name, "plot",time,i, slice_low, slice_up,
         h_mean_na, h_med_na, h_sd_na, h_cv_na,
         h_mean, h_med, h_sd, h_cv,
+        gap_filling$empty,gap_filling$occupied,
         rb_mean, rb_med, rb_sd, rb_cv,
         rb_mean_mask, rb_med_mask, rb_sd_mask, rb_cv_mask,
         coef
@@ -482,12 +507,17 @@ get_complexity_rb<-function(pc_norm,
           coef_s = reglin_s$coefficients["Z"][[1]]
         }else{coef_s=NA}
         
+        ## gap filling
+        gap_filling_s=get_gap_filling(clip_roi(pc_slice,
+                                             sf::st_as_sf(plot_ext_trans)),
+                                    voxel_size = 0.25)
         
         
         summary_plot[nrow(summary_plot) + 1, ] <- list(
           plot_name, names(subplot_extent[sp]),time, i, slice_low, slice_up,
           h_mean_s_na, h_med_s_na, h_sd_s_na, h_cv_s_na,
           h_mean_s, h_med_s, h_sd_s, h_cv_s,
+          gap_filling_s$empty,gap_filling_s$occupied,
           rb_mean_s, rb_med_s, rb_sd_s, rb_cv_s,
           rb_mean_mask_s, rb_med_mask_s, rb_sd_mask_s, rb_cv_mask_s,
           coef_s
@@ -719,4 +749,51 @@ get_regen_metric_plot<-function(regen_df){
     left_join(shannon_size_df, by = "plot") %>%
     left_join(growth_size_df,  by = "plot")
   return(final_df)
+}
+
+
+### ADULT METRICS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+get_adults <- function(inventory_df){
+  
+  plot_stand_metrics <- inventory_df %>%
+    mutate(
+      alive = Dead17 == 0 & Cut17 == 0,
+      basal_area_m2 = pi * (DBH2017 / 200)^2,  # DBH in cm -> radius in m
+      alive_big = Dead17 == 0 & Cut17 == 0 & DBH2017 > 20
+    ) %>%
+    group_by(plot) %>%
+    summarise(
+      n_trees_total = n(),
+      n_trees_alive = sum(alive, na.rm = TRUE),
+      n_dead = sum(Dead17 == 1, na.rm = TRUE),
+      n_cut = sum(Cut17 == 1, na.rm = TRUE),
+      n_recruits = sum(Recrut17 == 1, na.rm = TRUE),
+      
+      species_richness_total = n_distinct(SpeciesCode[!is.na(SpeciesCode)]),
+      species_richness_alive = n_distinct(SpeciesCode[alive & !is.na(SpeciesCode)]),
+      species_richness_dominant = n_distinct(SpeciesCode[alive_big & !is.na(SpeciesCode)]),
+      
+      mean_dbh_alive_cm = mean(DBH2017[alive], na.rm = TRUE),
+      median_dbh_alive_cm = median(DBH2017[alive], na.rm = TRUE),
+      max_dbh_alive_cm = max(DBH2017[alive], na.rm = TRUE),
+      sd_dbh_alive_cm = sd(DBH2017[alive], na.rm = TRUE),
+      
+      mean_height_alive_m = mean(Htot2017[alive], na.rm = TRUE),
+      max_height_alive_m = max(Htot2017[alive], na.rm = TRUE),
+      
+      basal_area_alive_m2 = sum(basal_area_m2[alive], na.rm = TRUE),
+      mean_basal_area_alive_m2 = mean(basal_area_m2[alive], na.rm = TRUE),
+      
+      biomass_alive = sum(Biomass2017[alive], na.rm = TRUE),
+      biomass_total = sum(Biomass2017, na.rm = TRUE),
+      virtual_biomass_total = sum(VirtualBiomass2017, na.rm = TRUE),
+      
+      mortality_rate = n_dead / n_trees_total,
+      cutting_rate = n_cut / n_trees_total,
+      recruitment_rate = n_recruits / n_trees_total,
+      
+      .groups = "drop"
+    )
 }

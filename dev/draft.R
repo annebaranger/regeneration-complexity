@@ -299,10 +299,52 @@ for(t in seq_along(list_rb)){
   }
 }
 
+las=pc_slice
 
-pc_norm=tar_read(pc_norm_GER11)
-rb_norm=tar_read(rb_norm_GER11)
-bbox=tar_read(bbox_GER11)
-subplot_extent=tar_read(subplot_extent_GER11)
-plot_name="GER11"
+xyz <- las@data[, .(X, Y, Z)]
+
+# --- 3. Voxelisation (voxR) ---
+vox <- vox(xyz, res = 0.25)
+
+# --- 4. Compute occupancy ---
+filled <- nrow(vox)
+
+# build full grid
+xg <- seq(min(xyz$X), max(xyz$X), by = 0.25)
+yg <- seq(min(xyz$Y), max(xyz$Y), by = 0.25)
+zg <- seq(0, 30, by = 0.25)
+
+total <- length(xg) * length(yg) * length(zg)
+
+empty_prop <- 1 - filled / total
+empty_prop
+
+
+# vox contains occupied voxels only
+occupied_voxels <- nrow(pc_slice_vox)
+
+# Define full 3D bounding box
+xrange <- range(las@data$X)
+yrange <- range(las@data$Y)
+zrange <- range(las@data$Z)
+
+nx <- ceiling(diff(xrange) / voxel_size)
+ny <- ceiling(diff(yrange) / voxel_size)
+nz <- ceiling(diff(zrange) / voxel_size)
+
+total_voxels <- nx * ny * nz
+empty_voxels <- total_voxels - occupied_voxels
+
+empty_prop <- empty_voxels / total_voxels
+occupied_prop <- occupied_voxels / total_voxels
+
+empty_prop
+occupied_prop
+pc_norm=tar_read(pc_norm_GER13)
+rb_norm=tar_read(rb_norm_GER13)
+bbox=tar_read(bbox_GER13)
+subplot_extent=tar_read(subplot_extent_GER13)
+plot_name="GER13"
 nstrat=4
+
+

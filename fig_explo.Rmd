@@ -58,23 +58,18 @@ metric3d_all %>%
 
 ```
 
-## Get metrics at the plot level 
-
-```{r}
-metric3d_all_plot=metric3d_all %>% 
-  filter(subplot=="plot") %>% 
-  pivot_longer(cols =  c(matches("h_"),"coef_lin")) 
-
-```
-
- 
 
 # Exploration of complexity measures 
 
 ```{r,fig.height=10,fig.width=10}
+
+metric3d_all_plot=metric3d_all %>% 
+  filter(subplot=="plot") %>% 
+  pivot_longer(cols =  c(matches("h_"),"occupied_gf"))
+
 metric3d_all %>% 
   filter(subplot!="plot") %>% 
-  pivot_longer(cols = c(matches("h_"),"coef_lin")) %>% 
+  pivot_longer(cols = c(matches("h_"),"occupied_gf")) %>% 
   ggplot(aes(slice_num,value,color=plot))+
   geom_line(aes(group=interaction(plot,subplot)),alpha = 0.4)+
   geom_point(data=metric3d_all_plot,aes(slice_num,value,color=plot))+
