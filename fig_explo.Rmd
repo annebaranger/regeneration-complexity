@@ -78,7 +78,7 @@ metric3d_all %>%
   theme_bw()
 
 
-metric3d_all_plot
+# metric3d_all_plot
 metric3d_all %>% 
   filter(subplot!="plot") %>% 
   filter(time==12) %>% 
@@ -98,6 +98,90 @@ Main outcomes :
 * median doesn't make sense when accounting for empty areas, drop "h_med"
 * "coef_lin" is not informative
 * The shape of h_mean=f(slice_num) seems to provide insight on the understory structure. Linear form are more common for plots with less regeneration, while saturating form could be more common for dense understory
+
+## Rank according to abondance
+
+```{r}
+metric3d_all_plot=metric3d_all %>% 
+  filter(subplot=="plot")
+
+regen_metrics_plot %>% 
+  select(plot,n_sapling) %>% 
+  mutate(n_sapling=replace_values(n_sapling, NA ~ 0)) %>% 
+  unique() %>% 
+  arrange(n_sapling) %>% 
+  pull(plot)->plot_arrange
+  
+metric3d_all %>% 
+  filter(subplot != "plot") %>% 
+  mutate(plot = factor(plot, levels = plot_arrange)) %>% 
+  ggplot(aes(slice_num, occupied_gf, color = plot)) +
+  geom_line(aes(group = interaction(plot, subplot)), alpha = 0.4) +
+  geom_point(
+    data = metric3d_all_plot %>% 
+      mutate(plot = factor(plot, levels = plot_arrange)),
+    aes(slice_num, occupied_gf, color = plot)
+  ) +
+  geom_line(
+    data = metric3d_all_plot %>% 
+      mutate(plot = factor(plot, levels = plot_arrange)),
+    aes(slice_num, occupied_gf, color = plot, group = interaction(plot, subplot))
+  ) +
+  facet_grid( ~ plot, scales = "free_y") +
+  theme_bw()
+
+
+
+
+
+regen_metrics_subplot %>% 
+  mutate(plot_sub=paste0(plot,"_",substr(subplot,9,9))) %>% 
+  select(plot_sub,n_sapling) %>%
+  mutate(n_sapling=replace_values(n_sapling, NA ~ 0)) %>% 
+  unique() %>% 
+  arrange(n_sapling) ->subplot_arrange
+
+
+metric3d_all %>% 
+  filter(subplot != "plot") %>% 
+  mutate(plot_sub = paste0(plot, "_", substr(subplot, 9, 9))) %>% 
+  mutate(plot_sub = factor(plot_sub, levels = subplot_arrange$plot_sub)) %>% 
+  left_join(subplot_arrange) %>% 
+  ggplot(aes(slice_num, occupied_gf,
+             group = plot_sub,
+             color = n_sapling)) +
+  geom_line(size = 0.9, alpha = 0.9) +
+  scale_color_viridis_c(
+    option = "plasma",
+    trans = "log10"
+  ) +
+  theme_bw()
+
+
+df_plot <- metric3d_all %>% 
+  filter(subplot != "plot") %>% 
+  mutate(
+    plot_sub = paste0(plot, "_", substr(subplot, 9, 9)),
+    plot_sub = factor(plot_sub, levels = subplot_arrange$plot_sub)
+  ) %>% 
+  left_join(subplot_arrange) %>% 
+  mutate(
+    abundance_cat = ntile(n_sapling, 5),
+    abundance_cat = factor(
+      abundance_cat,
+      levels = 1:5
+    )
+  )
+
+ggplot(df_plot, aes(slice_num, occupied_gf, group = plot_sub, color = n_sapling)) +
+  geom_line(size = 1.1, alpha = 0.9) +
+  scale_color_viridis_c(
+    option = "plasma",
+    trans = "log10"
+  ) +
+  facet_wrap(~ abundance_cat,ncol=5) +
+  theme_bw()
+```
 
 # Exploration of field metrics
 
@@ -217,6 +301,16 @@ regen_metrics_subplot %>%
   geom_point(aes(n_seedling, H_plot), size = 3)
 
 ```
+
+## Link between richness and abundance
+
+```{r}
+regen_metrics_plot %>% 
+  ggplot(aes(n_sapling,richness))+
+  geom_point()
+```
+
+
 # Exploration of radiative budget 
 
 ## Radiative budget throughout the day
@@ -248,10 +342,10 @@ reg_ext=regen_metrics_subplot %>%
 
 reg_ext %>% 
   left_join(metric3d_all %>% 
-              select(plot,subplot,slice_num,time,rb_sd) %>% 
+              select(plot,subplot,slice_num,time,rb_sd,occupied_gf) %>% 
               filter(slice_num==1) %>% filter(time==12) %>% 
               filter(subplot!="plot"),by=c("plot","subplot")) %>% 
-  ggplot(aes(rb_sd,y_val,col=plot))+
+  ggplot(aes(occupied_gf,y_val,col=plot))+
   geom_point()+geom_smooth(aes(color=NULL),method="lm")+
   facet_wrap(~y,scale="free_y",ncol=4)
 ```
@@ -294,7 +388,9 @@ metric3d_all %>%
 p
 ```
 
-# ACP regen light - subplot
+# ACP regen light
+
+## subplot
 
 ```{r}
 regen_metrics_subplot %>% 
@@ -316,6 +412,111 @@ library(factoextra)
 
 pca_df <- pca_df[sapply(pca_df, is.numeric)]
 pca_df <- na.omit(pca_df)
+
+# Run PCA (center and scale recommended)
+pca_res <- prcomp(pca_df[,1:10], center = TRUE, scale. = TRUE)
+
+# Summary of variance explained
+summary(pca_res)
+
+# Correlation circle (variables factor map)
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE                   # avoid label overlap
+)
+
+fviz_pca_biplot(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE                   # avoid label overlap
+)
+
+
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE,                   # avoid label overlap
+  axes = c(1,3)
+)
+
+fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
+
+```
+## Plot
+```{r}
+regen_metrics_plot %>% 
+  select(-matches("Height"),-H_hclass3,-H_hclass4,-H_hclass5,-Species) %>% 
+  unique() %>% 
+  mutate(n_sapling=case_when(is.na(n_sapling)~0,
+                             TRUE~n_sapling),
+         H_hclass1=case_when(is.na(H_hclass1)~0,
+                             TRUE~H_hclass1)) %>% 
+  left_join(metric3d_all %>% 
+              filter(subplot=="plot")%>% 
+              filter(time==12&slice_num==1) %>% 
+              select(plot,subplot,h_mean,h_sd,h_cv,rb_mean,rb_sd,rb_cv),
+            by=c("plot")) %>%
+  filter(plot%in%unique(metric3d_all$plot)) %>% 
+  select(-plot)->pca_df
+
+library(factoextra)
+
+pca_df <- pca_df[sapply(pca_df, is.numeric)]
+pca_df <- na.omit(pca_df)
+
+# Run PCA (center and scale recommended)
+pca_res <- prcomp(pca_df, center = TRUE, scale. = TRUE)
+
+# Summary of variance explained
+summary(pca_res)
+
+# Correlation circle (variables factor map)
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE                   # avoid label overlap
+)
+
+fviz_pca_biplot(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE                   # avoid label overlap
+)
+
+
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE,                   # avoid label overlap
+  axes = c(1,3)
+)
+
+fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
+
+```
+
+
+# Canopy species
+
+```{r}
+tar_load(plot_df)
+
+plot_df %>% 
+  left_join(regen_metrics_plot %>% 
+              select(plot,richness,abundance,H) %>% 
+              unique())%>% 
+  dplyr::select(-cutting_rate,-recruitment_rate,-n_cut,-cutting_rate,-n_recruits)->a
+
+
+pca_df <-sapply(a[,2:22], as.numeric)
+pca_df <- na.omit(pca_df) 
 
 # Run PCA (center and scale recommended)
 pca_res <- prcomp(pca_df, center = TRUE, scale. = TRUE)
@@ -341,6 +542,5 @@ fviz_pca_var(
 )
 
 fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
-
 ```
 

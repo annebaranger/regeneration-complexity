@@ -535,6 +535,10 @@ get_complexity_rb<-function(pc_norm,
 # Get regeneration metrics at the subplot level
 #' @param regen_df table of the data from the field
 get_regen_metric_subplot<-function(regen_df){
+  ### ALL SPECIES TOGETHER 
+  #%%%%%%%%%%%%%%%%%%%%%%%
+  
+  # Abundance & richness
   general_df <- regen_df %>%
     group_by(plot, subplot) %>%
     summarise(
@@ -553,10 +557,25 @@ get_regen_metric_subplot<-function(regen_df){
     group_by(plot, subplot) %>%
     summarise(
       richness_sd  = sd(richness),
+      abundance_sd = sd(abundance),
       abundance_cv = sd(abundance) / mean(abundance),
       .groups = "drop"
     )
   
+  # Abundance & richness - seedlings and saplings
+  seedling_df <- regen_df %>%
+    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
+    group_by(plot, subplot) %>%
+    summarise(richness_seedling     = n_distinct(Species),
+              n_seedling = sum(Count), .groups = "drop")
+  
+  sapling_df <- regen_df %>%
+    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
+    group_by(plot, subplot) %>%
+    summarise(richness_sapling   = n_distinct(Species),
+              n_sapling = sum(Count), .groups = "drop")
+  
+  # Shannon index total and per size class
   shannon_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
     group_by(plot, subplot, Species) %>%
@@ -568,36 +587,6 @@ get_regen_metric_subplot<-function(regen_df){
     ) %>%
     summarise(H = -sum(p), .groups = "drop")
   
-  browsing_df <- regen_df %>%
-    filter(Hclass > 1) %>%
-    group_by(plot, subplot) %>%
-    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
-  
-  seedling_df <- regen_df %>%
-    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
-    group_by(plot, subplot) %>%
-    summarise(n_seedling = sum(Count), .groups = "drop")
-  
-  sapling_df <- regen_df %>%
-    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
-    group_by(plot, subplot) %>%
-    summarise(n_sapling = sum(Count), .groups = "drop")
-  
-  growth_df <- regen_df %>%
-    filter(!is.na(Height_increment_1)) %>%
-    mutate(Height_increment = if_else(
-      !is.na(Height_increment_2),
-      (Height_increment_1 + Height_increment_2) / 2,
-      Height_increment_1
-    )) %>%
-    group_by(plot, subplot, Species) %>%
-    summarise(
-      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
-      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
-      .groups = "drop"
-    )
-  
-  # ── Tables at plot/subplot/Hclass level → pivot wide before joining ──────────
   shannon_size_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
     group_by(plot, subplot, Species, Hclass) %>%
@@ -610,7 +599,113 @@ get_regen_metric_subplot<-function(regen_df){
     summarise(H = -sum(p), .groups = "drop") %>%
     pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
   
+  # Growth rate, total and per size class
+  growth_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, subplot) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
   growth_size_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, subplot, Hclass) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from  = Hclass,
+      values_from = c(Height_increment_mn, Height_increment_cv),
+      names_sep   = "_hclass"
+    )
+  
+  # Height distribution
+  shannon_height_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot, subplot, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, subplot) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop")
+  
+  # browsing intensity
+  browsing_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot, subplot) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
+  ### SPECIES SPECIFIC 
+  #%%%%%%%%%%%%%%%%%%%%%%%
+  
+  # Abundance mean and variability
+  
+  general_sp_df <- regen_df %>%
+    group_by(plot, subplot,Species) %>%
+    summarise(
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  var_sp_df <- regen_df %>%
+    group_by(plot, subplot,Species, Quadrat) %>%
+    summarise(
+      abundance = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(plot, subplot,Species) %>%
+    summarise(
+      abundance_sd = sd(abundance),
+      abundance_cv = sd(abundance) / mean(abundance),
+      .groups = "drop"
+    )
+  
+  # Height distribution
+  shannon_height_sp_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot, subplot,Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, subplot,Species) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop")
+  
+  # Growth rate, total and per size class
+  growth_sp_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, subplot, Species) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
+  growth_sp_size_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
     mutate(Height_increment = if_else(
       !is.na(Height_increment_2),
@@ -629,6 +724,12 @@ get_regen_metric_subplot<-function(regen_df){
       names_sep   = "_hclass"
     )
   
+  # browsing intensity
+  browsing_sp_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot, subplot, Species) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
   # ── Final join at plot/subplot ────────────────────────────────────────────────
   final_df <- general_df %>%
     left_join(var_df,          by = c("plot", "subplot")) %>%
@@ -637,14 +738,25 @@ get_regen_metric_subplot<-function(regen_df){
     left_join(seedling_df,     by = c("plot", "subplot")) %>%
     left_join(sapling_df,     by = c("plot", "subplot")) %>%
     left_join(shannon_size_df, by = c("plot", "subplot")) %>%
-    left_join(growth_size_df,  by = c("plot", "subplot"))
-  return(final_df)
+    left_join(growth_size_df,  by = c("plot", "subplot")) %>% 
+    left_join(shannon_height_df, by = c("plot", "subplot"))
+  final_sp_df<-general_sp_df %>%
+    left_join(var_sp_df,             by = c("plot", "subplot","Species")) %>%
+    left_join(shannon_height_sp_df,  by = c("plot", "subplot","Species")) %>%
+    left_join(growth_sp_df,          by = c("plot", "subplot","Species")) %>%
+    left_join(growth_sp_size_df,     by = c("plot", "subplot","Species")) %>%
+    left_join(browsing_sp_df,        by = c("plot", "subplot","Species")) 
+  return(list(all=final_df,species=final_sp_df))
 }
 
 # Get regeneration metrics at the plot level
 #' @param regen_df table of the data from the field
 
 get_regen_metric_plot<-function(regen_df){
+  ### ALL SPECIES TOGETHER 
+  #%%%%%%%%%%%%%%%%%%%%%%%
+  
+  # Abundance & richness
   general_df <- regen_df %>%
     group_by(plot) %>%
     summarise(
@@ -654,7 +766,7 @@ get_regen_metric_plot<-function(regen_df){
     )
   
   var_df <- regen_df %>%
-    group_by(plot, subplot) %>%
+    group_by(plot, Quadrat) %>%
     summarise(
       richness  = n_distinct(Species),
       abundance = sum(as.numeric(Count), na.rm = TRUE),
@@ -663,10 +775,25 @@ get_regen_metric_plot<-function(regen_df){
     group_by(plot) %>%
     summarise(
       richness_sd  = sd(richness),
+      abundance_sd = sd(abundance),
       abundance_cv = sd(abundance) / mean(abundance),
       .groups = "drop"
     )
   
+  # Abundance & richness - seedlings and saplings
+  seedling_df <- regen_df %>%
+    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
+    group_by(plot) %>%
+    summarise(richness_seedling     = n_distinct(Species),
+              n_seedling = sum(Count), .groups = "drop")
+  
+  sapling_df <- regen_df %>%
+    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
+    group_by(plot) %>%
+    summarise(richness_sapling   = n_distinct(Species),
+              n_sapling = sum(Count), .groups = "drop")
+  
+  # Shannon index total and per size class
   shannon_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
     group_by(plot, Species) %>%
@@ -678,22 +805,111 @@ get_regen_metric_plot<-function(regen_df){
     ) %>%
     summarise(H = -sum(p), .groups = "drop")
   
+  shannon_size_df <- regen_df %>%
+    filter(!is.na(as.numeric(Count))) %>%
+    group_by(plot, Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, Hclass) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop") %>%
+    pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
+  
+  # Growth rate, total and per size class
+  growth_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
+  growth_size_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, Hclass) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from  = Hclass,
+      values_from = c(Height_increment_mn, Height_increment_cv),
+      names_sep   = "_hclass"
+    )
+  
+  # Height distribution
+  shannon_height_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop")
+  
+  # browsing intensity
   browsing_df <- regen_df %>%
     filter(Hclass > 1) %>%
     group_by(plot) %>%
     summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
   
-  seedling_df <- regen_df %>%
-    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
-    group_by(plot) %>%
-    summarise(n_seedling = sum(Count), .groups = "drop")
+  ### SPECIES SPECIFIC 
+  #%%%%%%%%%%%%%%%%%%%%%%%
   
-  sapling_df <- regen_df %>%
-    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
-    group_by(plot) %>%
-    summarise(n_sapling = sum(Count), .groups = "drop")
+  # Abundance mean and variability
   
-  growth_df <- regen_df %>%
+  general_sp_df <- regen_df %>%
+    group_by(plot,Species) %>%
+    summarise(
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  var_sp_df <- regen_df %>%
+    group_by(plot,Species, Quadrat) %>%
+    summarise(
+      abundance = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(plot,Species) %>%
+    summarise(
+      abundance_sd = sd(abundance),
+      abundance_cv = sd(abundance) / mean(abundance),
+      .groups = "drop"
+    )
+  
+  # Height distribution
+  shannon_height_sp_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot,Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot,Species) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop")
+  
+  # Growth rate, total and per size class
+  growth_sp_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
     mutate(Height_increment = if_else(
       !is.na(Height_increment_2),
@@ -707,20 +923,7 @@ get_regen_metric_plot<-function(regen_df){
       .groups = "drop"
     )
   
-  # ── Tables at plot/Hclass level → pivot wide before joining ──────────
-  shannon_size_df <- regen_df %>%
-    filter(!is.na(as.numeric(Count))) %>%
-    group_by(plot, Species, Hclass) %>%
-    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
-    group_by(plot, Hclass) %>%
-    mutate(
-      abundance_tot = sum(abundance),
-      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
-    ) %>%
-    summarise(H = -sum(p), .groups = "drop") %>%
-    pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
-  
-  growth_size_df <- regen_df %>%
+  growth_sp_size_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
     mutate(Height_increment = if_else(
       !is.na(Height_increment_2),
@@ -739,6 +942,12 @@ get_regen_metric_plot<-function(regen_df){
       names_sep   = "_hclass"
     )
   
+  # browsing intensity
+  browsing_sp_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot, Species) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
   # ── Final join at plot/subplot ────────────────────────────────────────────────
   final_df <- general_df %>%
     left_join(var_df,          by = "plot") %>%
@@ -747,8 +956,15 @@ get_regen_metric_plot<-function(regen_df){
     left_join(seedling_df,     by = "plot") %>%
     left_join(sapling_df,     by = "plot") %>%
     left_join(shannon_size_df, by = "plot") %>%
-    left_join(growth_size_df,  by = "plot")
-  return(final_df)
+    left_join(growth_size_df,  by = "plot") %>% 
+    left_join(shannon_height_df, by = "plot")
+  final_sp_df<-general_sp_df %>%
+    left_join(var_sp_df,             by = c("plot","Species")) %>%
+    left_join(shannon_height_sp_df,  by = c("plot","Species")) %>%
+    left_join(growth_sp_df,          by = c("plot","Species")) %>%
+    left_join(growth_sp_size_df,     by = c("plot","Species")) %>%
+    left_join(browsing_sp_df,        by = c("plot","Species")) 
+  return(list(all=final_df,species=final_sp_df))
 }
 
 
