@@ -44,6 +44,7 @@ loadRData <- function(fileName){
 tar_load(metric3d_all)
 tar_load(regen_metrics_plot)
 tar_load(regen_metrics_subplot)
+tar_load(plot_df)
 
 
 metric3d_all %>% 
@@ -65,11 +66,12 @@ metric3d_all %>%
 
 metric3d_all_plot=metric3d_all %>% 
   filter(subplot=="plot") %>% 
-  pivot_longer(cols =  c(matches("h_"),"occupied_gf"))
+  pivot_longer(cols =  c(matches("h_"),"occupied_gf",matches("pad")))
 
 metric3d_all %>% 
   filter(subplot!="plot") %>% 
-  pivot_longer(cols = c(matches("h_"),"occupied_gf")) %>% 
+  pivot_longer(cols = c(matches("h_"),"occupied_gf",matches("pad"))) %>% 
+  filter(!grepl("_na",name)) %>% 
   ggplot(aes(slice_num,value,color=plot))+
   geom_line(aes(group=interaction(plot,subplot)),alpha = 0.4)+
   geom_point(data=metric3d_all_plot,aes(slice_num,value,color=plot))+
@@ -105,7 +107,7 @@ Main outcomes :
 metric3d_all_plot=metric3d_all %>% 
   filter(subplot=="plot")
 
-regen_metrics_plot %>% 
+regen_metrics_plot$all %>% 
   select(plot,n_sapling) %>% 
   mutate(n_sapling=replace_values(n_sapling, NA ~ 0)) %>% 
   unique() %>% 
@@ -134,7 +136,7 @@ metric3d_all %>%
 
 
 
-regen_metrics_subplot %>% 
+regen_metrics_subplot$all %>% 
   mutate(plot_sub=paste0(plot,"_",substr(subplot,9,9))) %>% 
   select(plot_sub,n_sapling) %>%
   mutate(n_sapling=replace_values(n_sapling, NA ~ 0)) %>% 
@@ -187,7 +189,7 @@ ggplot(df_plot, aes(slice_num, occupied_gf, group = plot_sub, color = n_sapling)
 
 ## relevance of seedling number
 ```{r}
-regen_metrics_subplot %>% 
+regen_metrics_subplot$all %>% 
   ggplot(aes(abundance,n_seedling))+
   geom_point()+
   geom_abline(slope=1)+
@@ -195,7 +197,7 @@ regen_metrics_subplot %>%
        y="Seedlings number (class 1 and 2)",
        title="Subplot level")
 
-regen_metrics_plot %>% 
+regen_metrics_plot$all %>% 
   ggplot(aes(abundance,n_seedling))+
   geom_point()+
   geom_abline(slope=1)+
@@ -207,7 +209,7 @@ Seedling number is highly correlated to total abundance at both subplot and plot
 
 ## relevance of sapling number
 ```{r}
-regen_metrics_subplot %>% 
+regen_metrics_subplot$all %>% 
   ggplot(aes(abundance,n_sapling))+
   geom_point()+
   geom_smooth(method="lm")+
@@ -215,7 +217,7 @@ regen_metrics_subplot %>%
        y="Saplings number (class 1 and 2)",
        title="Subplot level")
 
-regen_metrics_plot %>% 
+regen_metrics_plot$all %>% 
   ggplot(aes(abundance,n_sapling))+
   geom_point()+
   geom_smooth(method="lm")+
@@ -227,8 +229,7 @@ regen_metrics_plot %>%
 
 ## Browsing metrics
 ```{r}
-regen_metrics_plot %>% 
-  select(-Species) %>% 
+regen_metrics_plot$all %>% 
   pivot_longer(cols=-c("plot","browsing")) %>% 
   mutate(name=factor(name,levels = c("abundance","abundance_cv","n_seedling","richness","richness_sd",
                                      "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
@@ -244,8 +245,7 @@ regen_metrics_plot %>%
 
 
 
-regen_metrics_subplot %>% 
-  select(-Species) %>% 
+regen_metrics_subplot$all %>% 
   pivot_longer(cols=-c("plot","subplot","browsing")) %>% 
   mutate(name=factor(name,levels = c("abundance","abundance_cv","n_seedling","richness","richness_sd",
                                      "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
@@ -265,15 +265,16 @@ Linked to higher richness and to higher sd in richness, at the plot scale.
 
 ### by species
 ```{r}
-regen_metrics_subplot %>% 
+regen_metrics_subplot$species %>% 
   select(plot,browsing,Species,matches("Height")) %>% 
   pivot_longer(cols=-c("plot","browsing","Species")) %>% 
-  mutate(name=factor(name,levels = c("Height_increment_mn_hclass2","Height_increment_mn_hclass3",
+  mutate(name=factor(name,levels = c("Height_increment_mn","Height_increment_cv",
+                                     "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
                                      "Height_increment_cv_hclass2","Height_increment_cv_hclass3"))) %>% 
   ggplot(aes(browsing,value,color=Species))+
   geom_point()+
   geom_smooth(method="gam",se=FALSE)+
-  facet_wrap(~name,scale="free_y",ncol=5)+
+  facet_wrap(~name,scale="free_y",ncol=2)+
   theme_bw()
 ```
 Not clear. Plot not relevant at the plot scale.
@@ -284,9 +285,9 @@ Not clear. Plot not relevant at the plot scale.
 ```{r}
 
 
-regen_metrics_subplot %>%
+regen_metrics_subplot$all %>%
   left_join(
-    regen_metrics_plot %>% select(plot, H_plot = H, n_seedling_plot = n_seedling),
+    regen_metrics_plot$all %>% select(plot, H_plot = H, n_seedling_plot = n_seedling),
     by = "plot"
   ) %>%
   ggplot(aes(color = plot)) +
@@ -305,9 +306,10 @@ regen_metrics_subplot %>%
 ## Link between richness and abundance
 
 ```{r}
-regen_metrics_plot %>% 
+regen_metrics_plot$all %>% 
   ggplot(aes(n_sapling,richness))+
-  geom_point()
+  geom_point()+
+  geom_smooth(method="gam")
 ```
 
 
@@ -335,19 +337,48 @@ Huge variability though at the subplot scale. For GER11 two peaks corresponding 
 ## Between heterogeneity of light and abundance/richness/H/brwosing
 
 ```{r}
-reg_ext=regen_metrics_subplot %>% 
-  select(plot,subplot,richness,abundance,H,browsing) %>% unique() %>% 
+reg_ext=regen_metrics_subplot$all %>% 
+  select(plot,subplot,
+         richness,richness_sd,richness_seedling,richness_sapling,
+         abundance,abundance_sd,abundance_cv,
+         H,H_height,browsing) %>% unique() %>% 
   pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val")
 
 
 reg_ext %>% 
   left_join(metric3d_all %>% 
               select(plot,subplot,slice_num,time,rb_sd,occupied_gf) %>% 
-              filter(slice_num==1) %>% filter(time==12) %>% 
+              # filter(slice_num==1) %>% 
+              filter(time==12) %>% 
               filter(subplot!="plot"),by=c("plot","subplot")) %>% 
-  ggplot(aes(occupied_gf,y_val,col=plot))+
+  filter(plot%in%metric3d_all$plot) %>% 
+  ggplot(aes(rb_sd,y_val,col=plot))+
+  geom_point()+geom_smooth(aes(color=NULL),method="gam")+
+  scale_x_log10()+
+  facet_wrap(slice_num~y,scale="free_y",nrow=4)
+
+
+
+reg_ext=regen_metrics_plot$all %>% 
+  select(plot,plot,
+         richness,richness_sd,richness_seedling,richness_sapling,
+         abundance,abundance_sd,abundance_cv,
+         Height_increment_mn,Height_increment_cv,
+         H,H_height,browsing) %>% unique() %>% 
+  pivot_longer(cols=-c(plot),names_to = "y",values_to = "y_val")
+
+
+reg_ext %>% 
+  left_join(metric3d_all %>% 
+              select(plot,subplot,slice_num,time,rb_cv,rb_mean,occupied_gf) %>% 
+              # filter(slice_num==1) %>% 
+              filter(time==12) %>% 
+              filter(subplot=="plot"),by=c("plot")) %>% 
+  filter(plot%in%metric3d_all$plot) %>% 
+  ggplot(aes(rb_cv,y_val,col=plot))+
   geom_point()+geom_smooth(aes(color=NULL),method="lm")+
-  facet_wrap(~y,scale="free_y",ncol=4)
+  scale_x_log10()+
+  facet_wrap(slice_num~y,scale="free_y",nrow=4)
 ```
 
 ```{r}
@@ -506,7 +537,6 @@ fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
 # Canopy species
 
 ```{r}
-tar_load(plot_df)
 
 plot_df %>% 
   left_join(regen_metrics_plot %>% 
@@ -543,4 +573,175 @@ fviz_pca_var(
 
 fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
 ```
+## Effect of adults diversity on light heterogeneity / quantity
+
+```{r}
+plot_df %>% 
+  select(plot,n_trees_alive,species_richness_alive) %>% 
+  left_join(metric3d_all_plot %>% 
+              filter(time==12,slice_num==1)%>% 
+              select(plot,rb_mean,rb_sd,rb_cv) ) %>% 
+  ggplot(aes(species_richness_alive,rb_sd))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+
+plot_df %>% 
+  select(plot,n_trees_alive,species_richness_alive) %>% 
+  left_join(regen_metrics_plot$all %>% 
+              select(plot,richness,richness_seedling,richness_sapling) ) %>% 
+  ggplot(aes(species_richness_alive,richness_sapling))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+
+plot_df %>% 
+  select(plot,species_richness_alive) %>% 
+  left_join(regen_metrics_plot$all %>% 
+              select(plot,richness)) %>% 
+  left_join(metric3d_all_plot %>%
+              filter(time==12,slice_num==1)%>% 
+              select(plot,rb_sd,rb_mean,rb_cv))%>%
+  mutate(rb_sd=log(rb_sd),
+         rb_mean=log(rb_mean)) %>%
+  mutate(across(c(species_richness_alive, richness, rb_sd, rb_mean), scale))->sem_df
+
+library(piecewiseSEM)
+library(semPlot)
+library(lavaan)
+
+lavaan_model <- '
+  richness ~ species_richness_alive + rb_sd + rb_mean
+  rb_sd    ~ species_richness_alive
+  rb_mean  ~ species_richness_alive
+'
+
+fit_lav <- sem(lavaan_model, data = sem_df)
+summary(fit_lav)
+# Plot
+semPaths(
+  object         = fit_lav,
+  what           = "std",
+  whatLabels     = "std",
+  layout         = "tree2",
+  edge.label.cex = 1.2,
+  node.label.cex = 1.2,
+  residuals      = FALSE,
+  intercepts     = FALSE
+)
+
+
+
+
+# 1. Extract coefficients from piecewiseSEM
+coef_table <- coefs(sem_model, standardize = "scale")
+
+# 2. Add significance stars
+coef_table$label <- with(coef_table, ifelse(P.Value < 0.001, paste0(round(Std.Estimate, 2), "***"),
+                                    ifelse(P.Value < 0.01,  paste0(round(Std.Estimate, 2), "**"),
+                                    ifelse(P.Value < 0.05,  paste0(round(Std.Estimate, 2), "*"),
+                                    ifelse(P.Value < 0.1,   paste0(round(Std.Estimate, 2), "."),
+                                                             round(Std.Estimate, 2))))))
+
+# 3. Plot with custom labels
+semPaths(
+  object         = fit_lav,
+  what           = "std",
+  whatLabels     = "std",
+  layout         = "tree2",
+  edge.label.cex = 1.2,
+  node.label.cex = 1.2,
+  residuals      = FALSE,
+  intercepts     = FALSE,
+  edgeLabels     = coef_table$label  # inject piecewiseSEM labels with stars
+)
+
+regen_metrics_plot$all %>%
+  select(plot,plot,richness) %>% 
+  left_join(plot_df %>% 
+              select(plot,species_richness_alive)) %>% 
+  left_join(metric3d_all %>%
+              filter(subplot=="plot") %>% 
+              filter(time==12,slice_num==1)%>% 
+              select(plot,subplot,rb_sd,rb_mean,rb_cv))%>%
+  mutate(rb_sd=log(rb_sd),
+         rb_mean=log(rb_mean)) %>%
+  mutate(across(c(species_richness_alive, richness, rb_sd, rb_mean), scale))->sem_df
+summary(lm(richness~rb_sd,data=sem_df))
+
+regen_metrics_plot$all %>% 
+  select(plot,plot,
+         richness,richness_sd,richness_seedling,richness_sapling,
+         abundance,abundance_sd,abundance_cv,
+         Height_increment_mn,Height_increment_cv,
+         H,H_height,browsing) %>% unique() %>% 
+  pivot_longer(cols=-c(plot),names_to = "y",values_to = "y_val") %>% 
+  left_join(metric3d_all %>% 
+              select(plot,subplot,slice_num,time,rb_sd,rb_mean,occupied_gf) %>% 
+              # filter(slice_num==1) %>% 
+              filter(time==12) %>% 
+              filter(subplot=="plot"),by=c("plot")) %>% 
+  filter(plot%in%metric3d_all$plot) %>% 
+  ggplot(aes(rb_mean,y_val,col=plot))+
+  geom_point()+geom_smooth(aes(color=NULL),method="lm")+
+  scale_x_log10()+
+  facet_wrap(slice_num~y,scale="free_y",nrow=4)
+
+regen_metrics_subplot$all %>% 
+  select(plot,subplot,
+         richness,richness_sd,richness_seedling,richness_sapling,
+         abundance,abundance_sd,abundance_cv,
+         Height_increment_mn,Height_increment_cv,
+         H,H_height,browsing) %>% unique() %>% 
+  pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val") %>% 
+  left_join(metric3d_all %>% 
+              select(plot,subplot,slice_num,time,rb_sd,rb_mean,occupied_gf) %>% 
+              # filter(slice_num==1) %>% 
+              filter(time==12) %>% 
+              filter(subplot!="plot"),by=c("plot","subplot")) %>% 
+  filter(plot%in%metric3d_all$plot) %>% 
+  ggplot(aes(rb_mean,y_val,col=plot))+
+  geom_point()+geom_smooth(aes(color=NULL),method="lm")+
+  scale_x_log10()+
+  facet_wrap(slice_num~y,scale="free_y",nrow=4)
+
+
+
+
+library(tidyverse)
+library(boot)
+
+# model function
+boot_fn <- function(data, indices){
+
+  d <- data[indices, ]
+
+  fit <- lm(richness ~ rb_sd, data = d)
+
+  coef(fit)
+}
+
+set.seed(123)
+
+boot_res <- boot(
+  data = sem_df,
+  statistic = boot_fn,
+  R = 10000
+)
+
+boot_res
+
+boot_slopes <- tibble(
+  intercept = boot_res$t[,1],
+  slope = boot_res$t[,2]
+)
+
+ggplot(boot_slopes, aes(slope)) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = coef(lm(richness ~ rb_sd, data = sem_df))[2],
+             color = "red")
+
+boot.ci(boot_res, type = "perc", index = 2)
+```
+
 

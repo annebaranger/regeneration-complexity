@@ -2,7 +2,7 @@ library(targets)
 library(tarchetypes)
 library(crew)
 tar_source(files = "R")
-tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl",
+tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
                             "ncdf4", "terra","sf",
                             "lidR","ITSMe"),
                controller = crew_controller_local(workers = 6),
@@ -47,6 +47,12 @@ mapped<-tar_map(
                             dtm),
                format = "file"),
     
+    tar_target(voxnorm,
+               get_pad(user,
+                       path_plot,
+                       plot_name),
+               format = "file"),
+    
     tar_target(pc_norm,
                get_pc_norm_clean(plot_name = plot_name,
                                  user,
@@ -60,6 +66,7 @@ mapped<-tar_map(
     tar_target(metric3d_df,
                get_complexity_rb(pc_norm,
                                  rb_norm,
+                                 voxnorm,
                                  bbox,
                                  subplot_extent,
                                  plot_name = plot_name,

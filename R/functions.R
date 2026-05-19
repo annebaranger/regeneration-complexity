@@ -142,26 +142,21 @@ get_rb<-function(dart_folder,
     )
     
     nc <- nc_open(path_ncdf)
-    
-    list_rb[[i]] <- ncvar_get(nc, "3D/All/ITERX/Band_0/Total_Entry")
-    
+    arr <- ncvar_get(nc, "3D/All/ITERX/Band_0/Total_Entry")
     nc_close(nc)
+    
+    y_idx <- seq_len(dim(arr)[1])
+    list_rb[[i]] <- arr[rev(y_idx), , , drop = FALSE]
   }
-  arr4d <- simplify2array(list_rb)
-  dims=dim(arr4d)
-  
-  y_idx <- seq_len(dim(arr4d)[1])
-  arr4d_flipped <- arr4d[rev(y_idx), , ,]
-  
-  
-  # sum_arr <- apply(arr4d_flipped, c(1, 2, 3), sum)
-  # sd_arr <- apply(arr4d_flipped, c(1, 2, 3), sd)
+
   
   path_rb=paste0("output/",plot_name,"_rb_raw.rdata")
   save(list_rb,file=path_rb)
   
   return(path_rb)
 }
+
+
 
 normalize_rb<-function(plot_name,
                        user,
@@ -236,6 +231,57 @@ normalize_rb<-function(plot_name,
   save(list_rb,file=path_rast_norm)
   return(path_rast_norm)
 }
+
+
+#### PLANT AREA DENSITY ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+get_pad<-function(user,
+                  path_plot,
+                  plot_name){
+  vox_path=file.path(path_plot,paste0(plot_name,"-processing"),"vox_merge.txt")
+  vox_df <- read_table(
+    vox_path,
+    col_names = TRUE
+  )
+  names(vox_df) <- gsub('"', '', names(vox_df))
+  
+  ### transform into array
+  x_vals <- sort(unique(vox_df$x))
+  y_vals <- sort(unique(vox_df$y))
+  z_vals <- sort(unique(vox_df$z))
+  
+  # Get all indices at once (vectorised)
+  ix <- match(vox_df$x, x_vals)
+  iy <- match(vox_df$y, y_vals)
+  iy_flipped <- length(y_vals) + 1 - iy
+  iz <- match(vox_df$z, z_vals)
+  
+  # Create empty array
+  arr <- array(
+    NA_real_,
+    dim = c(length(y_vals), length(x_vals), length(z_vals)),
+    # dimnames = list( y = y_vals, x = x_vals, z = z_vals)
+  )
+  
+  # Fill in one shot using a matrix of indices
+  arr[cbind(iy_flipped, ix, iz)] <- vox_df$pad_transmittance
+  
+  ### normalize
+  arr_norm <- apply(arr, c(1, 2), function(col) {
+    first_valid <- which(!is.na(col))[1]
+    if (is.na(first_valid)) return(rep(NA_real_, length(col)))  # all NA column
+    new_col <- col[first_valid:length(col)]
+    c(new_col, rep(NA_real_, length(col) - length(new_col)))    # pad end with NA
+  })
+  arr_norm <- aperm(arr_norm, c(2, 3, 1))
+  
+  path_vox=paste0("output/",plot_name,"_voxnorm.rdata")
+  save(arr_norm,file=path_vox)
+  return(path_vox)
+}
+
+
 
 #### POINT CLOUD ####
 #%%%%%%%%%%%%%%%%%%%%
@@ -348,7 +394,17 @@ get_gap_filling<-function(pc,voxel_size=0.25){
   occupied_prop <- occupied_voxels / total_voxels
   return(list(empty=empty_prop,occupied=occupied_prop))
 
-  }
+}
+
+
+get_gini<-function(x){
+  x <- x[is.finite(x)]
+  if (length(x) == 0) return(NA_real_)
+  if (all(x == 0)) return(0)
+  x <- sort(x)
+  n <- length(x)
+  (2 * sum(seq_len(n) * x)) / (n * sum(x)) - (n + 1) / n
+}
 # pc_norm=tar_read(pc_norm_GER13)
 # rb_norm=tar_read(rb_norm_GER13)
 # bbox=tar_read(bbox_GER13)
@@ -357,6 +413,7 @@ get_gap_filling<-function(pc,voxel_size=0.25){
 # nstrat=4
 get_complexity_rb<-function(pc_norm,
                             rb_norm,
+                            voxnorm,
                             bbox,
                             subplot_extent,
                             plot_name,
@@ -364,6 +421,7 @@ get_complexity_rb<-function(pc_norm,
   
   pc_norm<-loadRData(pc_norm)
   list_rb<-loadRData(rb_norm)
+  voxpad<-loadRData(voxnorm)
   
   slice_list = seq(from = 0.5, by = 1, length.out = nstrat+1)
   summary_plot=data.frame(plot=character(),
@@ -390,7 +448,11 @@ get_complexity_rb<-function(pc_norm,
                           rb_med_mask=numeric(),
                           rb_sd_mask=numeric(),
                           rb_cv_mask=numeric(),
-                          coef_lin=numeric())
+                          coef_lin=numeric(),
+                          pad_tot=numeric(),
+                          pad_mean=numeric(),
+                          pad_sd=numeric(),
+                          pad_cv=numeric())
   
   
   for(t in seq_along(list_rb)){
@@ -452,6 +514,20 @@ get_complexity_rb<-function(pc_norm,
       ## gap filling
       gap_filling=get_gap_filling(pc_slice,voxel_size = 0.25)
       
+      
+      ## pad
+      pad_slice=rast(apply(voxpad[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
+      ext(pad_slice)  <- ext(pc_slice_chm)
+      crs(pad_slice)  <- crs(pc_slice_chm)
+      pad_slice_matched <- resample(pad_slice, pc_slice_chm, method = "bilinear")
+      names(pad_slice_matched)="pad_sum"
+      
+      pad_tot=sum(values(pad_slice_matched),na.rm=TRUE)
+      pad_mean=mean(values(pad_slice_matched),na.rm=TRUE)
+      pad_sd=sd(values(pad_slice_matched),na.rm=TRUE)
+      pad_cv=pad_sd/pad_mean
+      
+      
       summary_plot[nrow(summary_plot) + 1, ] <- list(
         plot_name, "plot",time,i, slice_low, slice_up,
         h_mean_na, h_med_na, h_sd_na, h_cv_na,
@@ -459,7 +535,8 @@ get_complexity_rb<-function(pc_norm,
         gap_filling$empty,gap_filling$occupied,
         rb_mean, rb_med, rb_sd, rb_cv,
         rb_mean_mask, rb_med_mask, rb_sd_mask, rb_cv_mask,
-        coef
+        coef,
+        pad_tot,pad_mean,pad_sd,pad_cv
       )
       
       ### do the same for subplots
@@ -472,6 +549,8 @@ get_complexity_rb<-function(pc_norm,
         pc_sub_slice_chm_num=crop(pc_slice_chm_num,plot_ext_trans)
         rb_sub_slice_matched=crop(rb_slice_matched,plot_ext_trans)
         rb_sub_slice_matched_mask=crop(rb_slice_matched_mask,plot_ext_trans)
+        pad_sub_slice_matched=crop(pad_slice_matched,plot_ext_trans)
+        
         
         ### height metrics
         h_mean_s_na=mean(values(pc_sub_slice_chm),na.rm=TRUE)
@@ -512,6 +591,12 @@ get_complexity_rb<-function(pc_norm,
                                              sf::st_as_sf(plot_ext_trans)),
                                     voxel_size = 0.25)
         
+        ## pad metrics
+        pad_tot_s=sum(values(pad_sub_slice_matched),na.rm=TRUE)
+        pad_mean_s=mean(values(pad_sub_slice_matched),na.rm=TRUE)
+        pad_sd_s=sd(values(pad_sub_slice_matched),na.rm=TRUE)
+        pad_cv_s=pad_sd_s/pad_mean_s
+        
         
         summary_plot[nrow(summary_plot) + 1, ] <- list(
           plot_name, names(subplot_extent[sp]),time, i, slice_low, slice_up,
@@ -520,7 +605,8 @@ get_complexity_rb<-function(pc_norm,
           gap_filling_s$empty,gap_filling_s$occupied,
           rb_mean_s, rb_med_s, rb_sd_s, rb_cv_s,
           rb_mean_mask_s, rb_med_mask_s, rb_sd_mask_s, rb_cv_mask_s,
-          coef_s
+          coef_s,
+          pad_tot_s,pad_mean_s,pad_sd_s,pad_cv_s
         )
       }
     }
@@ -644,7 +730,7 @@ get_regen_metric_subplot<-function(regen_df){
       abundance_tot = sum(abundance),
       p = (abundance / abundance_tot) * log(abundance / abundance_tot)
     ) %>%
-    summarise(H = -sum(p), .groups = "drop")
+    summarise(H_height = -sum(p), .groups = "drop")
   
   # browsing intensity
   browsing_df <- regen_df %>%
@@ -688,7 +774,7 @@ get_regen_metric_subplot<-function(regen_df){
       abundance_tot = sum(abundance),
       p = (abundance / abundance_tot) * log(abundance / abundance_tot)
     ) %>%
-    summarise(H = -sum(p), .groups = "drop")
+    summarise(H_height = -sum(p), .groups = "drop")
   
   # Growth rate, total and per size class
   growth_sp_df <- regen_df %>%
@@ -738,6 +824,7 @@ get_regen_metric_subplot<-function(regen_df){
     left_join(seedling_df,     by = c("plot", "subplot")) %>%
     left_join(sapling_df,     by = c("plot", "subplot")) %>%
     left_join(shannon_size_df, by = c("plot", "subplot")) %>%
+    left_join(growth_df,  by = c("plot", "subplot")) %>% 
     left_join(growth_size_df,  by = c("plot", "subplot")) %>% 
     left_join(shannon_height_df, by = c("plot", "subplot"))
   final_sp_df<-general_sp_df %>%
@@ -862,7 +949,7 @@ get_regen_metric_plot<-function(regen_df){
       abundance_tot = sum(abundance),
       p = (abundance / abundance_tot) * log(abundance / abundance_tot)
     ) %>%
-    summarise(H = -sum(p), .groups = "drop")
+    summarise(H_height = -sum(p), .groups = "drop")
   
   # browsing intensity
   browsing_df <- regen_df %>%
@@ -906,7 +993,7 @@ get_regen_metric_plot<-function(regen_df){
       abundance_tot = sum(abundance),
       p = (abundance / abundance_tot) * log(abundance / abundance_tot)
     ) %>%
-    summarise(H = -sum(p), .groups = "drop")
+    summarise(H_height = -sum(p), .groups = "drop")
   
   # Growth rate, total and per size class
   growth_sp_df <- regen_df %>%
@@ -956,6 +1043,7 @@ get_regen_metric_plot<-function(regen_df){
     left_join(seedling_df,     by = "plot") %>%
     left_join(sapling_df,     by = "plot") %>%
     left_join(shannon_size_df, by = "plot") %>%
+    left_join(growth_df,  by = "plot") %>% 
     left_join(growth_size_df,  by = "plot") %>% 
     left_join(shannon_height_df, by = "plot")
   final_sp_df<-general_sp_df %>%
