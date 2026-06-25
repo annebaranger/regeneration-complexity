@@ -113,3 +113,167 @@ pad_tot=sum(values(pad_slice_matched),na.rm=TRUE)
 pad_mean=mean(values(pad_slice_matched),na.rm=TRUE)
 pad_sd=sd(values(pad_slice_matched),na.rm=TRUE)
 pad_cv=pad_sd/pad_mean
+
+
+# ── 1. Données longues ────────────────────────────────────────────────────────
+data <- regen_metrics_subplot$all %>%
+  select(plot, subplot,
+         richness, richness_sd, richness_seedling, richness_sapling,
+         H, H_hclass1, H_hclass2, H_hclass3, H_hclass4, H_hclass5,
+         H_height) %>%
+  left_join(
+    metric3d_all %>%
+      select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv, pad_sd) %>%
+      filter(time == 12, subplot != "plot"),
+    by = c("plot", "subplot")
+  ) %>%
+  filter(plot %in% metric3d_all$plot) %>%
+  mutate(
+    slice_num = factor(slice_num, levels = sort(unique(slice_num))),
+    plot      = as.factor(plot)
+  ) %>%
+  pivot_longer(
+    cols = -c(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv),
+    names_to  = "y",
+    values_to = "y_val"
+  ) %>%
+  group_by(y) %>%
+  mutate(y_val = as.numeric(scale(y_val))) %>%   # as.numeric : évite la colonne-matrice
+  ungroup()
+
+vars <- c("Total", "richness_sd", "richness_seedling", "richness_sapling",
+          "H", "H_hclass1", "H_hclass2", "H_hclass3", "H_hclass4", "H_hclass5",
+          "H_height", "pad_sd")
+
+# ── 2. Bootstrap (bootMer) par variable ──────────────────────────────────────
+# Modèle mixte : y_val ~ slice_num + slice_num:rb_cv + (1 | plot)
+#   - slice_num discret (facteur)
+#   - chaque coef "slice_num<niveau>:rb_cv" = pente de rb_cv DANS ce niveau
+#   - (1 | plot) = intercept aléatoire par plot
+
+slope_fun <- function(m) {
+  fx <- fixef(m)
+  fx[grepl(":rb_cv$", names(fx))]   # une pente par niveau de slice_num
+}
+
+boot_results <- map_dfr(vars, function(v) {
+  
+  data_lm <- data %>%
+    filter(y == v) %>%
+    drop_na(y_val, rb_cv, slice_num) %>%
+    droplevels()
+  
+  if (dplyr::n_distinct(data_lm$plot) < 5) return(NULL)   # assez de plots pour l'effet aléatoire
+  
+  fit <- suppressMessages(suppressWarnings(
+    lmer(y_val ~ slice_num + slice_num:rb_cv + (1 | plot),
+         data = data_lm, REML = FALSE,
+         control = lmerControl(check.conv.singular = "ignore"))
+  ))
+  
+  bm <- suppressWarnings(
+    bootMer(fit, slope_fun, nsim = 1000,
+            type = "parametric", use.u = FALSE, .progress = "none")
+  )
+  
+  cn   <- colnames(bm$t)                                   # noms des pentes
+  lvls <- sub("^slice_num", "", sub(":rb_cv$", "", cn))    # niveau de slice_num
+  
+  map_dfr(seq_along(cn), function(i) {
+    tibble(
+      var       = v,
+      slice_num = lvls[i],
+      slope     = bm$t[, i]
+    )
+  })
+})
+
+# ── 3. Plot ridgeline ─────────────────────────────────────────────────────────
+slice_levels <- levels(data$slice_num)
+n_vars       <- length(vars)
+n_slices     <- length(slice_levels)
+
+boot_results %>%
+  mutate(
+    slice_num  = factor(slice_num, levels = slice_levels),
+    var_idx    = as.numeric(factor(var, levels = vars)),
+    slice_code = as.numeric(slice_num),                    # 1..n_slices
+    slice_pos  = var_idx +
+      (slice_code - mean(seq_len(n_slices))) / max(n_slices - 1, 1) * 0.8
+  ) %>%
+  ggplot(aes(x = slope, y = slice_pos, group = interaction(var, slice_num),
+             fill = slice_num)) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.05, 0.5, 0.95),
+    alpha = 0.6, color = "white", linewidth = 0.3,
+    scale = 2
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(breaks = 1:n_vars, labels = vars) +
+  scale_fill_viridis_d(option = "mako", name = "Slice height") +   # _d : facteur
+  labs(x = "Slope of rb_cv (bootstrap)", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(face = "bold")
+  )
+
+
+boot_results %>%
+  mutate(
+    slice_num  = factor(slice_num, levels = slice_levels),
+    var_idx    = as.numeric(factor(var, levels = vars)),
+    slice_code = as.numeric(slice_num),                    # 1..n_slices
+    slice_pos  = var_idx +
+      (slice_code - mean(seq_len(n_slices))) / max(n_slices - 1, 1) * 0.8
+  ) %>%
+  filter(var %in% c("H", "H_hclass1", "H_hclass2", "H_hclass3", "H_hclass4", "H_hclass5")) %>%
+  # filter(var %in% c("H_height", "pad_sd")) %>%
+  # mutate(var=case_when(var=="H_height"~"Height heterogeneity",
+  #                      var=="pad_sd"~"Biomass distribution\n heterogeneity"
+  # )) %>% 
+  mutate(var=case_when(var=="H_hclass3"~"H (Height class 3)",
+                       var=="H_hclass1"~"H (Height class 1)",
+                       var=="H_hclass2"~"H (Height class 2)",
+                       var=="H_hclass4"~"H (Height class 4)",
+                       var=="H_hclass5"~"H (Height class 5)",
+                       var=="H"~"H"
+                       )) %>%
+  # mutate(var=case_when(var=="richness"~"Total",
+  #                      var=="richness_seedling"~"Seedlings",
+  #                      var=="richness_sapling"~"Saplings",
+  #                      var=="richness_sd"~"SD"
+  #                      ),
+  #        var=factor(var,
+  #                   levels=c("Total","Seedlings","Saplings","SD"))) %>% 
+  
+  ggplot(aes(x = slope, y = var, group = interaction(var, slice_num),
+             fill = slice_num)) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.05, 0.5, 0.95),
+    alpha = 0.6, color = "white", linewidth = 0.3,
+    scale = 1
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_fill_viridis_d(option = "mako", name = "Slice height") +   # _d : facteur
+  labs(x = "Slope of Y~(light CV)", y = NULL,
+       title="Sublot level") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(face = "bold")
+  )
+
+
+regen_metrics_subplot$all %>% 
+  select(plot,subplot,richness,abundance,H_height,n_sapling) %>% 
+  left_join(metric3d_all %>% 
+              filter(subplot!="plot") %>% 
+              filter(time==12) %>% 
+              select(plot,subplot,slice_num,h_sd,occupied_gf,pad_sd)) ->t
+  
+t %>% 
+  ggplot(aes(occupied_gf,richness))+
+  geom_point()+
+  facet_wrap(~slice_num)
+  

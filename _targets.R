@@ -5,7 +5,7 @@ tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
                             "ncdf4", "terra","sf",
                             "lidR","ITSMe"),
-               controller = crew_controller_local(workers = 6),
+               controller = crew_controller_local(workers = 10),
                error = "null")
 # lapply(c("targets",
 #          "dplyr", "ggplot2","data.table","tidyr","readxl",
@@ -70,8 +70,17 @@ mapped<-tar_map(
                                  bbox,
                                  subplot_extent,
                                  plot_name = plot_name,
-                                 nstrat    = 4))
+                                 nstrat    = 4)),
+    tar_target(H_ext,
+               get_Hext(rb_norm,
+                        pc_norm,
+                        subplot_extent,
+                        bbox,
+                        plot_name,
+                        targets=c(0.5,0.88)))
   )
+
+
 list(
   # Static targets (run once) ─────────────────────────────────────────────────
   tar_target(user, "Anne"),
@@ -84,6 +93,11 @@ list(
   tar_combine(
     metric3d_all,
     mapped[["metric3d_df"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  tar_combine(
+    H_ext_all,
+    mapped[["H_ext"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
   ),
   # Analyse regeneration survey ─────────────────────────────────────────────── 

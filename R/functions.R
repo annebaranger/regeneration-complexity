@@ -615,6 +615,112 @@ get_complexity_rb<-function(pc_norm,
 }
 
 
+# get extinction characteristics
+#' @param plot_name plot name
+#' @param targets characteristic height to compute
+get_Hext<-function(rb_norm,
+                   pc_norm,
+                   subplot_extent,
+                   bbox,
+                   plot_name,
+                   targets=c(0.5,0.88)){
+  list_rb<-loadRData(rb_norm)         # load radiative budget
+  pc_norm<-loadRData(pc_norm)
+  
+  summary_height=data.frame(plot=character(),
+                            subplot=character(),
+                            time=numeric(),
+                            extinction=numeric(),
+                            mean=numeric(),
+                            sd=numeric(),
+                            mean_slope=numeric(),
+                            sd_slope=numeric())
+  
+  
+  for(t in seq_along(list_rb)){      # loop over simulation time
+    rb_norm=list_rb[[t]]
+    time=as.numeric(names(list_rb)[t])
+    
+    
+    prof <- reshape2::melt(rb_norm, 
+                           varnames = c("i", "j", "z"), 
+                           value.name = "value") %>%
+      group_by(i, j) %>%
+      mutate(extinction = 1 - value / max(value),
+             z   = z * 0.25)
+    
+    # z prédit pour chaque cible de ext, par courbe (i,j)
+    half <- prof %>%
+      group_modify(~{
+        m   <- mgcv::gam(z ~ s(extinction, k = 5), data = .x)
+        eps <- 1e-2
+        z_pred <- as.numeric(predict(m, newdata = tibble(extinction = targets)))
+        z_hi   <- as.numeric(predict(m, newdata = tibble(extinction = targets + eps)))
+        z_lo   <- as.numeric(predict(m, newdata = tibble(extinction = targets - eps)))
+        tibble(extinction = targets,
+               z_pred = z_pred,
+               slope  = (z_hi - z_lo) / (2 * eps))   # dz/d(extinction)
+      }) %>%
+      ungroup()
+    
+    summary_height <- summary_height %>%
+      bind_rows(half %>%
+                  group_by(extinction) %>%
+                  summarise(mean       = mean(z_pred),
+                            sd         = sd(z_pred),
+                            mean_slope = mean(slope),
+                            sd_slope   = sd(slope),
+                            .groups = "drop") %>%
+                  mutate(time = time, plot = plot_name,subplot="plot"))
+    
+    # get a raster 
+    wide <- half %>%
+      pivot_wider(id_cols = c(i, j),
+                  names_from  = extinction,
+                  values_from = c(z_pred, slope))
+    
+    stk <- terra::rast(wide, type = "xyz")
+    names(stk) 
+    
+    # prepare reference raster
+    pc_chm <- rasterize_canopy(pc_norm, res = 0.15, algorithm = p2r())
+    ext(stk)  <- ext(pc_chm)
+    crs(stk)  <- crs(pc_chm)
+    stk_matched <- resample(stk, pc_chm, method = "bilinear")
+    
+    for(sp in seq_along(subplot_extent)){
+      plot_ext=subplot_extent[[sp]]
+      plot_ext_trans <- shift(vect(plot_ext), 
+                              dx = -bbox$xmin, 
+                              dy = -bbox$ymin)
+      
+      stk_sub=crop(stk_matched,plot_ext_trans)
+      
+      
+      summary_height <- summary_height %>%
+        bind_rows(as.data.frame(stk_sub,xy=TRUE) %>% 
+                    pivot_longer(
+                      cols = -c(x, y),
+                      names_to  = c(".value", "extinction"),
+                      names_sep = "_(?=[0-9])"          # split at the underscore before the number
+                    ) %>% 
+                    group_by(extinction) %>%
+                    summarise(mean       = mean(z_pred),
+                              sd         = sd(z_pred),
+                              mean_slope = mean(slope),
+                              sd_slope   = sd(slope),
+                              .groups = "drop") %>%
+                    mutate(extinction=as.numeric(extinction),
+                           time = time,
+                           plot = plot_name,
+                           subplot=names(subplot_extent[sp])))
+      
+    }
+  }
+  return(summary_height)
+}
+
+
 ### REGENERATION METRICS ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

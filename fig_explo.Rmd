@@ -8,9 +8,9 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE,message=FALSE)
 library(targets)
-lapply(c("stringr","tidyr","dplyr","tibble", # data analysis
-         "ggplot2","viridis", "ggridges","wesanderson",# plot
-         "factoextra", "nlme","modi","rstan","shinystan",# stat & models
+lapply(c("stringr","tidyr","dplyr","tibble","tidyverse", # data analysis
+         "ggplot2","viridis", "ggridges","wesanderson","ggridges",# plot
+         "factoextra", "nlme","modi","rstan","shinystan","boot",# stat & models
          "rworldmap" # geographic data #terre, sf
          ),require,character.only=TRUE)
 theme_set(theme_bw()) # ggplot theme
@@ -347,12 +347,12 @@ reg_ext=regen_metrics_subplot$all %>%
 
 reg_ext %>% 
   left_join(metric3d_all %>% 
-              select(plot,subplot,slice_num,time,rb_sd,occupied_gf) %>% 
+              select(plot,subplot,slice_num,time,rb_sd,rb_cv,occupied_gf) %>% 
               # filter(slice_num==1) %>% 
               filter(time==12) %>% 
               filter(subplot!="plot"),by=c("plot","subplot")) %>% 
   filter(plot%in%metric3d_all$plot) %>% 
-  ggplot(aes(rb_sd,y_val,col=plot))+
+  ggplot(aes(rb_cv,y_val,col=plot))+
   geom_point()+geom_smooth(aes(color=NULL),method="gam")+
   scale_x_log10()+
   facet_wrap(slice_num~y,scale="free_y",nrow=4)
@@ -377,12 +377,12 @@ reg_ext %>%
   filter(plot%in%metric3d_all$plot) %>% 
   ggplot(aes(rb_cv,y_val,col=plot))+
   geom_point()+geom_smooth(aes(color=NULL),method="lm")+
-  scale_x_log10()+
+  # scale_x_log10()+
   facet_wrap(slice_num~y,scale="free_y",nrow=4)
 ```
 
 ```{r}
-regen_metrics_subplot %>% 
+regen_metrics_subplot$all %>% 
   select(plot,subplot,richness,abundance,n_sapling,H,Height_increment_mn_hclass2) %>% 
   group_by(plot,subplot) %>% 
   summarise(across(everything(), \(x) mean(x, na.rm = TRUE)),
@@ -573,6 +573,8 @@ fviz_pca_var(
 
 fviz_eig(pca_res, addlabels = TRUE, ylim = c(0, 50))
 ```
+
+
 ## Effect of adults diversity on light heterogeneity / quantity
 
 ```{r}
@@ -634,7 +636,7 @@ semPaths(
 
 
 # 1. Extract coefficients from piecewiseSEM
-coef_table <- coefs(sem_model, standardize = "scale")
+coef_table <- coefs(fit_lav, standardize = "scale")
 
 # 2. Add significance stars
 coef_table$label <- with(coef_table, ifelse(P.Value < 0.001, paste0(round(Std.Estimate, 2), "***"),
@@ -687,61 +689,610 @@ regen_metrics_plot$all %>%
   scale_x_log10()+
   facet_wrap(slice_num~y,scale="free_y",nrow=4)
 
-regen_metrics_subplot$all %>% 
-  select(plot,subplot,
-         richness,richness_sd,richness_seedling,richness_sapling,
-         abundance,abundance_sd,abundance_cv,
-         Height_increment_mn,Height_increment_cv,
-         H,H_height,browsing) %>% unique() %>% 
-  pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val") %>% 
-  left_join(metric3d_all %>% 
-              select(plot,subplot,slice_num,time,rb_sd,rb_mean,occupied_gf) %>% 
-              # filter(slice_num==1) %>% 
-              filter(time==12) %>% 
-              filter(subplot!="plot"),by=c("plot","subplot")) %>% 
-  filter(plot%in%metric3d_all$plot) %>% 
-  ggplot(aes(rb_mean,y_val,col=plot))+
-  geom_point()+geom_smooth(aes(color=NULL),method="lm")+
-  scale_x_log10()+
-  facet_wrap(slice_num~y,scale="free_y",nrow=4)
 
-
-
-
-library(tidyverse)
-library(boot)
-
-# model function
-boot_fn <- function(data, indices){
-
-  d <- data[indices, ]
-
-  fit <- lm(richness ~ rb_sd, data = d)
-
-  coef(fit)
-}
-
-set.seed(123)
-
-boot_res <- boot(
-  data = sem_df,
-  statistic = boot_fn,
-  R = 10000
-)
-
-boot_res
-
-boot_slopes <- tibble(
-  intercept = boot_res$t[,1],
-  slope = boot_res$t[,2]
-)
-
-ggplot(boot_slopes, aes(slope)) +
-  geom_histogram(bins = 40) +
-  geom_vline(xintercept = coef(lm(richness ~ rb_sd, data = sem_df))[2],
-             color = "red")
-
-boot.ci(boot_res, type = "perc", index = 2)
 ```
 
 
+
+# First hypothesis 
+We hypothesised that greater spatial heterogeneity of light is associated with greater species diversity of regeneration (species richness, Shannon index), independently of mean light quantity.
+
+## check collinearity
+
+```{r}
+metric3d_all %>% 
+              select(plot,subplot,slice_num,time,rb_cv,rb_mean,rb_sd) %>% 
+              # filter(slice_num==1) %>% 
+              filter(time==12) %>% 
+              filter(subplot=="plot")->pca_df
+
+# Run PCA (center and scale recommended)
+pca_res <- prcomp(pca_df[,5:7], center = TRUE, scale. = TRUE)
+
+# Summary of variance explained
+summary(pca_res)
+
+# Correlation circle (variables factor map)
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",            # color by contribution
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = TRUE                   # avoid label overlap
+)
+```
+## coefficient of rb_cv slope
+```{r}
+# ── 1. Données longues ────────────────────────────────────────────────────────
+data <- regen_metrics_plot$all %>%
+  select(plot,
+         richness, richness_sd, richness_seedling, richness_sapling,
+         H, H_hclass1, H_hclass2, H_hclass3, H_hclass4, H_hclass5,
+         H_height) %>%
+  left_join(
+    metric3d_all %>%
+      select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv, pad_sd) %>%
+      filter(time == 12, subplot == "plot"),
+    by = "plot"
+  ) %>%
+  filter(plot %in% metric3d_all$plot) %>%
+  pivot_longer(
+    cols = -c(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv),
+    names_to  = "y",
+    values_to = "y_val"
+  ) %>% 
+  mutate(slice_num=as.factor(slice_num)) %>% 
+  group_by(y) %>% 
+  mutate(y_val=scale(y_val))
+
+vars <- c("richness", "richness_sd", "richness_seedling", "richness_sapling",
+          "H", "H_hclass1", "H_hclass2", "H_hclass3", "H_hclass4", "H_hclass5",
+          "H_height", "pad_sd")
+
+# ── 2. Fonction bootstrap ─────────────────────────────────────────────────────
+# Modèle : y_val ~ rb_cv * slice_num
+# coef(fit) retourne :
+#   [1] intercept
+#   [2] rb_cv              ← pente "principale" de rb_cv (à slice_num = 0)
+#   [3] slice_num
+#   [4] rb_cv:slice_num    ← comment la pente de rb_cv change avec slice_num
+
+boot_fn <- function(data, indices) {
+  d   <- data[indices, ]
+  fit <- lm(y_val ~ slice_num + slice_num:rb_cv, data = d)
+  coef(fit)
+}
+
+# ── 3. Bootstrap par variable ────────────────────────────────────────────────
+boot_results <- map_dfr(vars, function(v) {
+
+  data_lm <- data %>%
+    filter(y == v) %>%
+    drop_na(y_val, rb_cv, slice_num) %>%
+    droplevels()
+
+  if (nrow(data_lm) < 10) return(NULL)
+
+  # strata = slice_num : chaque rééchantillon garde tous les niveaux
+  # -> nombre de coefficients stable d'un tirage à l'autre
+  boot_res <- boot(data = data_lm, statistic = boot_fn, R = 1000,
+                   strata = data_lm$slice_num)
+
+  cn        <- names(boot_res$t0)
+  slope_idx <- which(grepl(":rb_cv$", cn))                 # pentes par niveau
+  lvls      <- sub("^slice_num", "", sub(":rb_cv$", "", cn[slope_idx]))
+
+  map_dfr(seq_along(slope_idx), function(i) {
+    tibble(
+      var       = v,
+      slice_num = lvls[i],
+      slope     = boot_res$t[, slope_idx[i]]
+    )
+  })
+})
+
+# ── 4. Plot ridgeline ─────────────────────────────────────────────────────────
+slice_levels <- levels(data$slice_num)
+n_vars       <- length(vars)
+n_slices     <- length(slice_levels)
+
+boot_results %>%
+  mutate(
+    slice_num  = factor(slice_num, levels = slice_levels),
+    var_idx    = as.numeric(factor(var, levels = vars)),
+    slice_code = as.numeric(slice_num),                    # 1..n_slices
+    slice_pos  = var_idx +
+      (slice_code - mean(seq_len(n_slices))) / max(n_slices - 1, 1) * 0.8
+  ) %>%
+  ggplot(aes(x = slope, y = slice_pos, group = interaction(var, slice_num),
+             fill = slice_num)) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.05, 0.5, 0.95),
+    alpha = 0.6, color = "white", linewidth = 0.3,
+    scale = 2
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(breaks = 1:n_vars, labels = vars) +
+  scale_fill_viridis_d(option = "mako", name = "Slice height") +  # _d : discret
+  labs(x = "Slope of rb_cv (bootstrap)", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(face = "bold")
+  )
+```
+-> comm : run the analysis for group of variables (richness, shannon index, pad_sd) to avoid scaling 
+
+
+## subplpot scale
+
+
+```{r}
+# ── 1. Données longues ────────────────────────────────────────────────────────
+data <- regen_metrics_subplot$all %>%
+  select(plot,subplot,
+         richness, richness_sd, richness_seedling, richness_sapling,
+         H, H_hclass1, H_hclass2, H_hclass3, H_hclass4, H_hclass5,
+         H_height) %>%
+  left_join(
+    metric3d_all %>%
+      select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv, pad_sd) %>%
+      filter(time == 12, subplot != "plot"),
+    by = c("plot","subplot")
+  ) %>%
+  filter(plot %in% metric3d_all$plot) %>%
+  mutate(slice_num=as.factor(slice_num),
+         plot=as.factor(plot)) %>% 
+  pivot_longer(
+    cols = -c(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv),
+    names_to  = "y",
+    values_to = "y_val"
+  ) %>% 
+  group_by(y) %>% 
+  mutate(y_val=scale(y_val)) %>% ungroup()
+
+vars <- c("richness", "richness_sd", "richness_seedling", "richness_sapling",
+          "H", "H_hclass1", "H_hclass2", "H_hclass3", "H_hclass4", "H_hclass5",
+          "H_height", "pad_sd")
+
+# ── 2. Fonction bootstrap ─────────────────────────────────────────────────────
+# Modèle : y_val ~ rb_cv * slice_num
+# coef(fit) retourne :
+#   [1] intercept
+#   [2] rb_cv              ← pente "principale" de rb_cv (à slice_num = 0)
+#   [3] slice_num
+#   [4] rb_cv:slice_num    ← comment la pente de rb_cv change avec slice_num
+
+boot_fn <- function(data, indices) {
+  d   <- data[indices, ]
+  fit <- lm(y_val ~ rb_cv * slice_num, data = d)
+  coef(fit)
+}
+
+# ── 3. Bootstrap par variable × slice_num ────────────────────────────────────
+# On bootstrappe une seule fois par variable (slice_num est continu dans le modèle).
+# On récupère ensuite la pente effective de rb_cv à chaque valeur de slice_num :
+#   slope(rb_cv | slice_num = s) = beta_rb_cv + beta_rb_cv:slice_num * s
+
+slices <- sort(unique(data$slice_num))   # valeurs observées de slice_num
+
+boot_results <- map_dfr(vars, function(v) {
+  
+  data_lm <- data %>%
+    filter(y == v) %>%          # pad_sd est dans y comme les autres
+    drop_na(y_val, rb_cv, slice_num)
+  
+  if (nrow(data_lm) < 10) return(NULL)
+  
+  boot_res <- boot(data = data_lm, statistic = boot_fn, R = 1000)
+  
+  beta_rb_cv       <- boot_res$t[, 2]
+  beta_rb_cv_slice <- boot_res$t[, 4]
+  
+  map_dfr(slices, function(s) {
+    tibble(
+      var       = v,
+      slice_num = s,
+      slope     = beta_rb_cv + beta_rb_cv_slice * s
+    )
+  })
+})
+
+# ── 4. Plot ridgeline ─────────────────────────────────────────────────────────
+# Créer des positions numériques
+n_vars   <- length(vars)
+n_slices <- length(slices)
+
+boot_results %>%
+  mutate(
+    var_idx   = as.numeric(factor(var, levels = vars)),
+    slice_pos = var_idx + (slice_num - mean(slices)) /
+                  (max(slices) - min(slices)) * 0.8
+  ) %>%
+  ggplot(aes(x = slope, y = slice_pos, group = interaction(var, slice_num),
+             fill = slice_num)) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.05, 0.5, 0.95),
+    alpha = 0.6, color = "white", size = 0.3,
+    scale = 2
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(
+    breaks = 1:n_vars,
+    labels = vars
+  ) +
+  scale_fill_viridis_c(option = "mako", name = "Slice height") +
+  labs(x = "Slope of rb_cv (bootstrap)", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(face = "bold")
+  )
+```
+
+
+# Second hypothesis :  comparison of coefficients between sapling and seedling
+This heterogeneity–diversity relationship was expected to be stronger for younger regeneration stages, both because older individuals have likely experienced different light conditions over time, and because they are subject to additional, potentially stronger filters such as competition and browsing 
+
+
+```{r}
+# Les 3 variables à comparer
+vars_compare <- c("richness", "richness_seedling", "richness_sapling")
+
+# Extraire les distributions bootstrap pour ces 3 variables
+boot_compare <- boot_results %>%
+  filter(var %in% vars_compare)
+
+# ── Toutes les paires ─────────────────────────────────────────────────────────
+pairs <- combn(vars_compare, 2, simplify = FALSE)
+
+diff_results <- map_dfr(pairs, function(pair) {
+  map_dfr(slices, function(s) {
+    
+    slopes_a <- boot_compare %>% filter(var == pair[1], slice_num == s) %>% pull(slope)
+    slopes_b <- boot_compare %>% filter(var == pair[2], slice_num == s) %>% pull(slope)
+    
+    # Différence des distributions bootstrap
+    diff <- slopes_a - slopes_b
+    
+    tibble(
+      var_a     = pair[1],
+      var_b     = pair[2],
+      pair      = paste(pair[1], "−", pair[2]),
+      slice_num = s,
+      diff_mean = mean(diff),
+      diff_lo   = quantile(diff, 0.025),
+      diff_hi   = quantile(diff, 0.975),
+      diff_p    = mean(diff > 0),          # P(diff > 0)
+      sig       = diff_lo > 0 | diff_hi < 0  # IC ne contient pas 0
+    )
+  })
+})
+
+# ── Plot ──────────────────────────────────────────────────────────────────────
+diff_results %>%
+  ggplot(aes(x = slice_num, y = diff_mean, color = sig)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_ribbon(aes(ymin = diff_lo, ymax = diff_hi, fill = sig), 
+              alpha = 0.2, color = NA) +
+  geom_line(size = 0.8) +
+  geom_point(size = 2) +
+  scale_color_manual(values = c("FALSE" = "grey50", "TRUE" = "#E84855"),
+                     name = "IC 95% ≠ 0") +
+  scale_fill_manual(values  = c("FALSE" = "grey50", "TRUE" = "#E84855"),
+                    name = "IC 95% ≠ 0") +
+  facet_wrap(~ pair, ncol = 1) +
+  labs(
+    x     = "slice_num (hauteur LiDAR)",
+    y     = "Différence de pente rb_cv (A − B)",
+    title = "Comparaison des pentes rb_cv entre variables de richesse",
+    subtitle = "Rouge = IC 95% bootstrap ne contient pas 0"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    strip.text       = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+# ── Table résumé ──────────────────────────────────────────────────────────────
+diff_results %>%
+  select(pair, slice_num, diff_mean, diff_lo, diff_hi, diff_p, sig) %>%
+  mutate(across(where(is.numeric), round, 3)) %>%
+  print(n = Inf)
+```
+
+
+# Third hypothesis 
+
+We also hypothesized that, independently of heterogeneity, mean light quantity is positively associated with regeneration abundance and biomass 
+
+
+```{r}
+data <- regen_metrics_plot$all %>%
+  select(plot,
+         abundance, abundance_sd,n_sapling,
+         Height_increment_mn_hclass2,Height_increment_mn_hclass3) %>%
+  left_join(
+    metric3d_all %>%
+      select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv,
+             pad_tot,pad_mean,occupied_gf) %>%
+      filter(time == 12, subplot == "plot"),
+    by = "plot"
+  ) %>%
+  filter(plot %in% metric3d_all$plot) %>%
+  mutate(rb_mean=log(rb_mean)) %>% 
+  pivot_longer(
+    cols = -c(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv),
+    names_to  = "y",
+    values_to = "y_val"
+  ) %>% 
+  group_by(y) %>% 
+  mutate(y_val=scale(y_val))
+
+# data %>% 
+#   ggplot(aes(rb_mean,y_val,col=plot))+
+#   geom_point()+geom_smooth(aes(color=NULL),method="lm")+
+#   scale_x_log10()+
+#   facet_wrap(slice_num~y,scale="free_y",nrow=4)
+
+
+vars <- c("abundance", "abundance_sd", "n_sapling", "Height_increment_mn_hclass2",
+          "Height_increment_mn_hclass3", "pad_tot", "pad_mean", "occupied_gf")
+
+# ── 2. Fonction bootstrap ─────────────────────────────────────────────────────
+# Modèle : y_val ~ rb_cv * slice_num
+# coef(fit) retourne :
+#   [1] intercept
+#   [2] rb_cv              ← pente "principale" de rb_cv (à slice_num = 0)
+#   [3] slice_num
+#   [4] rb_cv:slice_num    ← comment la pente de rb_cv change avec slice_num
+
+boot_fn <- function(data, indices) {
+  d   <- data[indices, ]
+  fit <- lm(y_val ~ rb_mean * slice_num, data = d)
+  coef(fit)
+}
+
+# ── 3. Bootstrap par variable × slice_num ────────────────────────────────────
+# On bootstrappe une seule fois par variable (slice_num est continu dans le modèle).
+# On récupère ensuite la pente effective de rb_cv à chaque valeur de slice_num :
+#   slope(rb_cv | slice_num = s) = beta_rb_cv + beta_rb_cv:slice_num * s
+
+slices <- sort(unique(data$slice_num))   # valeurs observées de slice_num
+
+boot_results <- map_dfr(vars, function(v) {
+  
+  data_lm <- data %>%
+    filter(y == v) %>%          # pad_sd est dans y comme les autres
+    drop_na(y_val, rb_mean, slice_num)
+  
+  if (nrow(data_lm) < 10) return(NULL)
+  
+  boot_res <- boot(data = data_lm, statistic = boot_fn, R = 1000)
+  
+  beta_rb_mean       <- boot_res$t[, 2]
+  beta_rb_mean_slice <- boot_res$t[, 4]
+  
+  map_dfr(slices, function(s) {
+    tibble(
+      var       = v,
+      slice_num = s,
+      slope     = beta_rb_mean + beta_rb_mean * s
+    )
+  })
+})
+
+# ── 4. Plot ridgeline ─────────────────────────────────────────────────────────
+# Créer des positions numériques
+n_vars   <- length(vars)
+n_slices <- length(slices)
+
+
+boot_results %>%
+  mutate(
+    var_idx   = as.numeric(factor(var, levels = vars)),
+    slice_pos = var_idx + (slice_num - mean(slices)) /
+                  (max(slices) - min(slices)) * 0.8
+  ) %>%
+  ggplot(aes(x = slope, y = slice_pos, group = interaction(var, slice_num),
+             fill = slice_num)) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.05, 0.5, 0.95),
+    alpha = 0.6, color = "white", size = 0.3,
+    scale = 2
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  scale_y_continuous(
+    breaks = 1:n_vars,
+    labels = vars
+  ) +
+  scale_fill_viridis_c(option = "mako", name = "Hauteur\n(slice_num)") +
+  labs(x = "Pente de rb_cv (bootstrap)", y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(face = "bold")
+  )
+
+```
+
+effect on abundance and and gap_fraction
+
+# Fourth hypothesis
+we tested the interaction between light heterogeneity and quantity, predicting that at low mean light levels, heterogeneity has a relatively stronger effect on regeneration diversity and structure
+```{r}
+data <- regen_metrics_plot$all %>%
+  select(plot,
+         abundance,richness,richness_seedling) %>%
+  left_join(
+    metric3d_all %>%
+      select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv,
+             pad_tot,pad_mean,occupied_gf,pad_sd) %>%
+      filter(time == 12, subplot == "plot"),
+    by = "plot"
+  ) %>%
+  filter(plot %in% metric3d_all$plot) %>%
+  mutate(rb_mean=log(rb_mean)) %>% 
+  pivot_longer(
+    cols = -c(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv),
+    names_to  = "y",
+    values_to = "y_val"
+  ) %>% 
+  group_by(y) %>% 
+  mutate(y_val=scale(y_val)) %>% 
+  filter(slice_num==1)
+
+
+data_model <- data %>% ungroup() %>% 
+  distinct(plot, rb_cv, rb_mean, rb_sd) %>%
+  mutate(
+    rb_mean_c = scale(rb_mean, center = TRUE, scale = TRUE)[,1],  # centré réduit
+    rb_cv_c   = scale(rb_cv,   center = TRUE, scale = TRUE)[,1]
+  )
+
+cat("Corrélation rb_cv ~ rb_mean :", cor(data_model$rb_cv, data_model$rb_mean), "\n")
+
+# ── 2. Joindre aux variables de diversité ─────────────────────────────────────
+data_int <- data %>%
+  filter(slice_num == 1) %>%    # un slice pour simplifier
+  select(plot, y, y_val) %>%
+  left_join(data_model, by = "plot")
+
+
+
+vars <- c("abundance","richness", "richness_seedling", "pad_sd","occupied_gf")
+
+# ── 3. Bootstrap avec interaction rb_cv × rb_mean ─────────────────────────────
+# Modèle : y ~ rb_cv_c * rb_mean_c
+# coef :
+#   [1] intercept
+#   [2] rb_cv_c           ← effet de l'hétérogénéité à rb_mean moyen
+#   [3] rb_mean_c         ← effet de la quantité à rb_cv moyen
+#   [4] rb_cv_c:rb_mean_c ← interaction : est-ce que l'effet de rb_cv 
+#                           change selon rb_mean ? (hypothèse ici)
+
+boot_fn_int <- function(data, indices) {
+  d   <- data[indices, ]
+  fit <- lm(y_val ~ rb_cv_c * rb_mean_c, data = d)
+  coef(fit)
+}
+
+boot_int_results <- map_dfr(vars, function(v) {
+  
+  data_lm <- data_int %>%
+    filter(y == v) %>%
+    drop_na(y_val, rb_cv_c, rb_mean_c)
+  
+  if (nrow(data_lm) < 10) return(NULL)
+  
+  boot_res <- boot(data = data_lm, statistic = boot_fn_int, R = 1000)
+  
+  tibble(
+    var          = v,
+    # Effet rb_cv à rb_mean moyen
+    slope_rb_cv  = boot_res$t[, 2],
+    # Interaction : signe négatif = rb_cv plus fort quand rb_mean faible ✓ hypothèse
+    slope_int    = boot_res$t[, 4]
+  )
+})
+
+# ── 4. Résumé statistique ─────────────────────────────────────────────────────
+summary_int <- boot_int_results %>%
+  group_by(var) %>%
+  summarise(
+    # Effet principal rb_cv
+    rb_cv_mean = mean(slope_rb_cv),
+    rb_cv_lo   = quantile(slope_rb_cv, 0.025),
+    rb_cv_hi   = quantile(slope_rb_cv, 0.975),
+    rb_cv_sig  = rb_cv_lo > 0 | rb_cv_hi < 0,
+    # Interaction
+    int_mean   = mean(slope_int),
+    int_lo     = quantile(slope_int, 0.025),
+    int_hi     = quantile(slope_int, 0.975),
+    int_sig    = int_lo > 0 | int_hi < 0,
+    # P(interaction dans le sens de l'hypothèse) = P(coef < 0)
+    # rb_mean faible + rb_cv élevé → interaction négative attendue
+    p_hyp      = mean(slope_int < 0)
+  ) %>%
+  mutate(across(where(is.numeric), round, 3))
+
+print(summary_int)
+
+# ── 5. Plot : distribution de l'interaction par variable ──────────────────────
+# Calculer le sens de l'interaction par variable pour le fill
+fill_colors <- boot_int_results %>%
+  group_by(var) %>%
+  summarise(median_int = median(slope_int)) %>%
+  mutate(hyp_confirmed = median_int < 0)
+
+boot_int_results %>%
+  mutate(var = factor(var, levels = vars)) %>%
+  left_join(fill_colors, by = "var") %>%
+  ggplot(aes(x = slope_int, y = fct_rev(var), fill = hyp_confirmed)) +
+  stat_density_ridges(
+    quantile_lines = TRUE, quantiles = c(0.025, 0.5, 0.975),
+    alpha = 0.75, color = "white", size = 0.3,
+    scale = 1.2
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey30") +
+  scale_fill_manual(
+    values = c("TRUE" = "#4A90D9", "FALSE" = "#E84855"),
+    labels = c("TRUE" = "Hypothèse confirmée\n(rb_cv + fort si rb_mean faible)",
+               "FALSE" = "Sens inverse"),
+    name = NULL
+  ) +
+  labs(
+    x        = "Coefficient d'interaction rb_cv × rb_mean",
+    y        = NULL,
+    title    = "Test de l'interaction lumière hétérogénéité × quantité",
+    subtitle = "Bleu = interaction négative (confirme l'hypothèse)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y      = element_text(face = "bold"),
+    legend.position  = "bottom"
+  )
+```
+# Fifth hypothesis
+We hypothesised that canopy diversity influences regeneration diversity through two independent, quantifiable pathways: (i) by modulating the spatial heterogeneity of the light environment (H5.1), and (ii) by modulating seed availability through the presence of different seed producing trees (H5.2).
+
+```{r}
+data <- regen_metrics_plot$all %>%
+  select(plot,
+         richness,browsing) %>%
+  left_join(
+    metric3d_all %>%
+      select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv) %>%
+      filter(time == 12, subplot == "plot"),
+    by = "plot"
+  ) %>%
+  left_join(plot_df %>% 
+              select(plot,n_trees_alive,species_richness_alive,species_richness_dominant)) %>% 
+  filter(plot %in% metric3d_all$plot) %>% 
+  filter(slice_num==1) %>% 
+  mutate(rb_sd=log(rb_sd))
+
+summary(lm(richness~rb_sd+species_richness_alive+browsing,data=data))
+anova(lm(richness~rb_sd+species_richness_alive+browsing,data=data))
+Anova(lm(richness~rb_sd+species_richness_alive+browsing,data=data))
+
+metric3d_all %>%
+  select(plot, subplot, slice_num, time, rb_sd, rb_mean, rb_cv) %>%
+  filter(time == 12, subplot == "plot",slice_num==1)%>%
+  left_join(plot_df ) %>% 
+  pivot_longer(cols=-c(plot,subplot,slice_num,time,rb_sd,rb_mean,rb_cv)) %>% 
+  ggplot(aes(log(rb_mean),value))+
+  geom_point()+
+  geom_smooth(method="gam")+
+  facet_wrap(~name,scale="free_y")
+  
+```
+ #todo
+
+-> posthoc analysis of the structure of seedling/sapling community - regarding their shade tolerance = compute community wieghted mean?
+-> correlation with seed mass ? heavy seeds likely more present under the cover of their parents
+
+Plot effect in subplot analysis
+Compute survival between height class!
+test rb_sd ~ abundance in different height class
+compute mortality rate of parents
