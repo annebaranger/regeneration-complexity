@@ -64,12 +64,15 @@ prep_pca_data <- function(regen, id_cols, plot_level) {
            H_height, browsing) %>%                     # complexity
     inner_join(
       metric3d_all_unsliced %>%
-        filter(if (plot_level) subplot == "plot" else subplot != "plot") %>% #,
-               # time == 12, slice_num == 1) %>%
-        select(all_of(id_cols), h_mean, h_cv, empty_gf, pad_tot, pad_cv),
+        filter(if (plot_level) subplot == "plot" else subplot != "plot",time == 12) %>% #,
+               # , slice_num == 1) %>%
+        select(all_of(id_cols), empty_gf, pad_tot, pad_cv, ri,fhd), #h_mean, h_cv,
       by = id_cols
     )
 }
+
+
+
 
 pca_data_plot    <- prep_pca_data(regen_metrics_plot$all,    "plot",              TRUE)
 pca_data_subplot <- prep_pca_data(regen_metrics_subplot$all, c("plot","subplot"), FALSE)
@@ -97,6 +100,8 @@ var_meta <- tribble(
   "H_height",            "Complexity",   "Vertical \ndistribution",
   "h_cv",                "Complexity",   "Height \nvariability",
   "pad_cv",              "Complexity",   "PAD \nvariability",
+  "ri",                  "Complexity",   "Rumple index",
+  "fhd",                 "Complexity",   "Foliage height \ndiversity",
   "browsing",            "Other",        "Browsing"
 )
 
@@ -288,7 +293,7 @@ pca_data_plot %>%
   mutate(rb_mean=log(rb_mean))->light_test
 
 
-explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","h_mean","Height_increment_mn","empty_gf","H_height","h_cv","pad_cv")
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
 explaining <- c("rb_mean","rb_cv","mean","sd","mean_slope","sd_slope")
 
 
@@ -338,7 +343,7 @@ boot_long %>%
     type = factor(case_when(
       explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
       explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf") ~ "Quantity",
-      explained %in% c("H_height","h_cv","pad_cv") ~ "Complexity"
+      explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
     ), levels = c("Composition","Quantity","Complexity")),
     excl0 = lo > 0 | hi < 0,                         # interval excludes zero
     explained = recode(explained,
@@ -347,7 +352,8 @@ boot_long %>%
       abundance="Abundance", pad_tot="PAD\ntotal",
       h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
       empty_gf="Gap fraction", H_height="Vertical\ndistribution",
-      h_cv="Height\nvariability", pad_cv="PAD\nvariability"),
+      h_cv="Height\nvariability", pad_cv="PAD\nvariability",
+      ri="Rumple index",fhd="Foliage height \ndiversity"),
     # explained = factor(explained, levels = rev(explained_order)),
     explaining = recode(explaining,
       rb_mean="Radiative\nbudget mean", rb_cv="Radiative\nbudget var.",
@@ -503,9 +509,8 @@ pca_data_subplot %>%
   mutate(rb_mean=log(rb_mean))->light_test_sub
 
 
-explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","h_mean","Height_increment_mn","empty_gf","H_height","h_cv","pad_cv")
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
 explaining <- c("rb_mean","rb_cv","mean","sd","mean_slope","sd_slope")
-
 
 std_coef <- function(d, y, x, covar = "browsing") {
   d <- d %>%
@@ -558,7 +563,7 @@ boot_long %>%
     type = factor(case_when(
       explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
       explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf") ~ "Quantity",
-      explained %in% c("H_height","h_cv","pad_cv") ~ "Complexity"
+      explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
     ), levels = c("Composition","Quantity","Complexity")),
     excl0 = lo > 0 | hi < 0,                         # interval excludes zero
     explained = recode(explained,
@@ -567,7 +572,8 @@ boot_long %>%
       abundance="Abundance", pad_tot="PAD\ntotal",
       h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
       empty_gf="Gap fraction", H_height="Vertical\ndistribution",
-      h_cv="Height\nvariability", pad_cv="PAD\nvariability"),
+      h_cv="Height\nvariability", pad_cv="PAD\nvariability",
+      ri="Rumple index",fhd="Foliage height \ndiversity"),
     # explained = factor(explained, levels = rev(explained_order)),
     explaining = recode(explaining,
       rb_mean="Radiative\nbudget mean", rb_cv="Radiative\nbudget var.",
@@ -591,6 +597,7 @@ boot_long %>%
     panel.grid.minor = element_blank(),
     legend.position = "top"
   )
+
 ```
 
 # effect of adults on light distribution and regeneration structure
