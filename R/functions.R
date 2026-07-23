@@ -407,414 +407,220 @@ get_gini<-function(x){
 }
 # pc_norm=tar_read(pc_norm_GER13)
 # rb_norm=tar_read(rb_norm_GER13)
+# voxnorm=tar_read(voxnorm_GER13)
 # bbox=tar_read(bbox_GER13)
 # subplot_extent=tar_read(subplot_extent_GER13)
 # plot_name="GER13"
 # nstrat=4
-get_complexity_rb<-function(pc_norm,
-                            rb_norm,
-                            voxnorm,
-                            bbox,
-                            subplot_extent,
-                            plot_name,
-                            nstrat=4){
+
+
+# Compute every per-slice metric from the already-prepared rasters.
+# `chm`      : canopy height raster (layer named "Z"), NA-excluded stats
+# `chm_num`  : same but NA -> 0
+# `rb`       : resampled, quantile-filtered relative-brightness raster (named "rb")
+# `rb_mask`  : rb masked by chm
+# `pad`      : resampled plant-area-density raster
+# `pc_gap`   : point cloud (slice or clipped slice) for gap filling
+.slice_metrics <- function(chm, chm_num, rb, rb_mask, pad, pad_cube,
+                           pc_gap, slice_up,
+                           voxel_size = 0.25, min_pts_lm = 3) {
   
-  pc_norm<-loadRData(pc_norm)
-  list_rb<-loadRData(rb_norm)
-  voxpad<-loadRData(voxnorm)
+  v_chm <- values(chm)
+  h_mean_na <- mean(v_chm, na.rm = TRUE)
+  h_med_na  <- median(v_chm, na.rm = TRUE)
+  h_sd_na   <- sd(v_chm, na.rm = TRUE)
   
-  slice_list = seq(from = 0.5, by = 1, length.out = nstrat+1)
-  summary_plot=data.frame(plot=character(),
-                          subplot=character(),
-                          time=numeric(),
-                          slice_num=numeric(),
-                          slice_low=numeric(),
-                          slice_up=numeric(),
-                          h_mean_na=numeric(),
-                          h_med_na=numeric(),
-                          h_sd_na=numeric(),
-                          h_cv_na=numeric(),
-                          h_mean=numeric(),
-                          h_med=numeric(),
-                          h_sd=numeric(),
-                          h_cv=numeric(),
-                          empty_gf=numeric(),
-                          occupied_gf=numeric(),
-                          rb_mean=numeric(),
-                          rb_med=numeric(),
-                          rb_sd=numeric(),
-                          rb_cv=numeric(),
-                          rb_mean_mask=numeric(),
-                          rb_med_mask=numeric(),
-                          rb_sd_mask=numeric(),
-                          rb_cv_mask=numeric(),
-                          coef_lin=numeric(),
-                          pad_tot=numeric(),
-                          pad_mean=numeric(),
-                          pad_sd=numeric(),
-                          pad_cv=numeric())
+  v_chm_num <- values(chm_num)
+  h_mean <- mean(v_chm_num, na.rm = TRUE)
+  h_med  <- median(v_chm_num, na.rm = TRUE)
+  h_sd   <- sd(v_chm_num, na.rm = TRUE)
   
+  v_rb <- values(rb)
+  rb_mean <- mean(v_rb, na.rm = TRUE)
+  rb_med  <- median(v_rb, na.rm = TRUE)
+  rb_sd   <- sd(v_rb, na.rm = TRUE)
   
-  for(t in seq_along(list_rb)){
-    rb_norm=list_rb[[t]]
-    time=as.numeric(names(list_rb)[t])
-    
-    for(i in 1:nstrat){
-      slice_low=slice_list[i]
-      slice_up=slice_list[i+1]
-      
-      ### metric at the plot scale for height
-      pc_slice=filter_poi(pc_norm, Z >= slice_low & Z < slice_up)
-      pc_slice_chm <- rasterize_canopy(pc_slice, res = 0.1, algorithm = p2r())
-      pc_slice_chm[pc_slice_chm > (slice_up-0.01)] <- NA
-      
-      # excluding zone without vegetation
-      h_mean_na=mean(values(pc_slice_chm),na.rm=TRUE)
-      h_med_na=median(values(pc_slice_chm),na.rm=TRUE)
-      h_sd_na=sd(values(pc_slice_chm),na.rm=TRUE)
-      h_cv_na=h_sd_na/h_mean_na
-      
-      # accounting for empty space
-      pc_slice_chm_num=pc_slice_chm
-      pc_slice_chm_num[is.na(pc_slice_chm_num)] <- 0
-      
-      h_mean=mean(values(pc_slice_chm_num),na.rm=TRUE)
-      h_med=median(values(pc_slice_chm_num),na.rm=TRUE)
-      h_sd=sd(values(pc_slice_chm_num),na.rm=TRUE)
-      h_cv=h_sd/h_mean
-      
-      ### metric at the plot scale for light
-      rb_slice=rast(apply(rb_norm[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
-      ext(rb_slice)  <- ext(pc_slice_chm)
-      crs(rb_slice)  <- crs(pc_slice_chm)
-      rb_slice_matched <- resample(rb_slice, pc_slice_chm, method = "bilinear")
-      names(rb_slice_matched)="rb"
-      rb_slice_matched[rb_slice_matched<quantile(values(rb_slice_matched),
-                                                 na.rm=TRUE,probs=0.005)] <-NA
-      rb_slice_matched_mask = mask(rb_slice_matched,pc_slice_chm)
-      
-      
-      rb_mean=mean(values(rb_slice_matched),na.rm=TRUE)
-      rb_med=median(values(rb_slice_matched),na.rm=TRUE)
-      rb_sd=sd(values(rb_slice_matched),na.rm=TRUE)
-      rb_cv=rb_sd/rb_mean
-      rb_mean_mask=mean(values(rb_slice_matched_mask),na.rm=TRUE)
-      rb_med_mask=median(values(rb_slice_matched_mask),na.rm=TRUE)
-      rb_sd_mask=sd(values(rb_slice_matched_mask),na.rm=TRUE)
-      rb_cv_mask=rb_sd_mask/rb_mean_mask
-      
-      df=as.data.frame(c(pc_slice_chm,
-                         rb_slice_matched),xy=TRUE,
-                       na.rm=TRUE) %>% 
-        filter(Z<(slice_up-0.01))
-      reglin=lm(rb~Z,data=df)
-      coef = reglin$coefficients["Z"][[1]]
-      
-      
-      ## gap filling
-      gap_filling=get_gap_filling(pc_slice,voxel_size = 0.25)
-      
-      
-      ## pad
-      pad_slice=rast(apply(voxpad[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
-      ext(pad_slice)  <- ext(pc_slice_chm)
-      crs(pad_slice)  <- crs(pc_slice_chm)
-      pad_slice_matched <- resample(pad_slice, pc_slice_chm, method = "bilinear")
-      names(pad_slice_matched)="pad_sum"
-      
-      pad_tot=sum(values(pad_slice_matched),na.rm=TRUE)
-      pad_mean=mean(values(pad_slice_matched),na.rm=TRUE)
-      pad_sd=sd(values(pad_slice_matched),na.rm=TRUE)
-      pad_cv=pad_sd/pad_mean
-      
-      
-      summary_plot[nrow(summary_plot) + 1, ] <- list(
-        plot_name, "plot",time,i, slice_low, slice_up,
-        h_mean_na, h_med_na, h_sd_na, h_cv_na,
-        h_mean, h_med, h_sd, h_cv,
-        gap_filling$empty,gap_filling$occupied,
-        rb_mean, rb_med, rb_sd, rb_cv,
-        rb_mean_mask, rb_med_mask, rb_sd_mask, rb_cv_mask,
-        coef,
-        pad_tot,pad_mean,pad_sd,pad_cv
-      )
-      
-      ### do the same for subplots
-      for(sp in seq_along(subplot_extent)){
-        plot_ext=subplot_extent[[sp]]
-        plot_ext_trans <- shift(vect(plot_ext), 
-                                dx = -bbox$xmin, 
-                                dy = -bbox$ymin)
-        pc_sub_slice_chm=crop(pc_slice_chm,plot_ext_trans)
-        pc_sub_slice_chm_num=crop(pc_slice_chm_num,plot_ext_trans)
-        rb_sub_slice_matched=crop(rb_slice_matched,plot_ext_trans)
-        rb_sub_slice_matched_mask=crop(rb_slice_matched_mask,plot_ext_trans)
-        pad_sub_slice_matched=crop(pad_slice_matched,plot_ext_trans)
-        
-        
-        ### height metrics
-        h_mean_s_na=mean(values(pc_sub_slice_chm),na.rm=TRUE)
-        h_med_s_na=median(values(pc_sub_slice_chm),na.rm=TRUE)
-        h_sd_s_na=sd(values(pc_sub_slice_chm),na.rm=TRUE)
-        h_cv_s_na=h_sd_s_na/h_mean_s_na
-        
-        ### height metrics, na set as 0
-        h_mean_s=mean(values(pc_sub_slice_chm_num),na.rm=TRUE)
-        h_med_s=median(values(pc_sub_slice_chm_num),na.rm=TRUE)
-        h_sd_s=sd(values(pc_sub_slice_chm_num),na.rm=TRUE)
-        h_cv_s=h_sd_s/h_mean_s
-        
-        ### rb metrics 
-        rb_mean_s=mean(values(rb_sub_slice_matched),na.rm=TRUE)
-        rb_med_s=median(values(rb_sub_slice_matched),na.rm=TRUE)
-        rb_sd_s=sd(values(rb_sub_slice_matched),na.rm=TRUE)
-        rb_cv_s=rb_sd_s/rb_mean_s
-        
-        ### rb metrics masked
-        rb_mean_mask_s=mean(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-        rb_med_mask_s=median(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-        rb_sd_mask_s=sd(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-        rb_cv_mask_s=rb_sd_mask_s/rb_mean_mask_s
-        
-        names(rb_sub_slice_matched)="rb"
-        df_s=as.data.frame(c(pc_sub_slice_chm,
-                             rb_sub_slice_matched),xy=TRUE,
-                           na.rm=TRUE) %>% 
-          filter(Z<(slice_up-0.01))
-        if(dim(df_s)[1]>3){
-          reglin_s=lm(rb~Z,data=df_s)
-          coef_s = reglin_s$coefficients["Z"][[1]]
-        }else{coef_s=NA}
-        
-        ## gap filling
-        gap_filling_s=get_gap_filling(clip_roi(pc_slice,
-                                             sf::st_as_sf(plot_ext_trans)),
-                                    voxel_size = 0.25)
-        
-        ## pad metrics
-        pad_tot_s=sum(values(pad_sub_slice_matched),na.rm=TRUE)
-        pad_mean_s=mean(values(pad_sub_slice_matched),na.rm=TRUE)
-        pad_sd_s=sd(values(pad_sub_slice_matched),na.rm=TRUE)
-        pad_cv_s=pad_sd_s/pad_mean_s
-        
-        
-        summary_plot[nrow(summary_plot) + 1, ] <- list(
-          plot_name, names(subplot_extent[sp]),time, i, slice_low, slice_up,
-          h_mean_s_na, h_med_s_na, h_sd_s_na, h_cv_s_na,
-          h_mean_s, h_med_s, h_sd_s, h_cv_s,
-          gap_filling_s$empty,gap_filling_s$occupied,
-          rb_mean_s, rb_med_s, rb_sd_s, rb_cv_s,
-          rb_mean_mask_s, rb_med_mask_s, rb_sd_mask_s, rb_cv_mask_s,
-          coef_s,
-          pad_tot_s,pad_mean_s,pad_sd_s,pad_cv_s
-        )
-      }
-    }
+  v_rbm <- values(rb_mask)
+  rb_mean_mask <- mean(v_rbm, na.rm = TRUE)
+  rb_med_mask  <- median(v_rbm, na.rm = TRUE)
+  rb_sd_mask   <- sd(v_rbm, na.rm = TRUE)
+  
+  # linear trend rb ~ Z over vegetated pixels below the slice top
+  df <- as.data.frame(c(chm, rb), xy = TRUE, na.rm = TRUE) %>%
+    filter(Z < (slice_up - 0.01))
+  coef <- if (nrow(df) > min_pts_lm) {
+    lm(rb ~ Z, data = df)$coefficients[["Z"]]
+  } else {
+    NA_real_
   }
-  return(summary_plot)
+  
+  gf <- get_gap_filling(pc_gap, voxel_size = voxel_size)
+  
+  v_pad <- values(pad)
+  pad_tot  <- sum(v_pad, na.rm = TRUE)
+  pad_mean <- mean(v_pad, na.rm = TRUE)
+  pad_sd   <- sd(v_pad, na.rm = TRUE)
+  
+  profile <- as.vector(global(pad_cube, "sum", na.rm = TRUE)[, 1])
+  fhd     <- .fhd(profile)
+  
+  
+  ri_na <- rumple_index(chm)
+  ri <- rumple_index(chm_num)
+  
+  list(
+    h_mean_na = h_mean_na, h_med_na = h_med_na, h_sd_na = h_sd_na,
+    h_cv_na = h_sd_na / h_mean_na,
+    h_mean = h_mean, h_med = h_med, h_sd = h_sd, h_cv = h_sd / h_mean,
+    empty = gf$empty, occupied = gf$occupied,
+    rb_mean = rb_mean, rb_med = rb_med, rb_sd = rb_sd, rb_cv = rb_sd / rb_mean,
+    rb_mean_mask = rb_mean_mask, rb_med_mask = rb_med_mask, rb_sd_mask = rb_sd_mask,
+    rb_cv_mask = rb_sd_mask / rb_mean_mask,
+    coef = coef,
+    pad_tot = pad_tot, pad_mean = pad_mean, pad_sd = pad_sd,
+    pad_cv = pad_sd / pad_mean,
+    ri=ri,
+    ri_na=ri_na,
+    fhd=fhd
+  )
+}
+
+# Assemble one output row in the exact column order of the original data frame.
+.make_row <- function(plot_name, subplot, time, slice_num, slice_low, slice_up, m) {
+  data.frame(
+    plot = plot_name, subplot = subplot, time = time,
+    slice_num = slice_num, slice_low = slice_low, slice_up = slice_up,
+    h_mean_na = m$h_mean_na, h_med_na = m$h_med_na, h_sd_na = m$h_sd_na, h_cv_na = m$h_cv_na,
+    h_mean = m$h_mean, h_med = m$h_med, h_sd = m$h_sd, h_cv = m$h_cv,
+    empty_gf = m$empty, occupied_gf = m$occupied,
+    rb_mean = m$rb_mean, rb_med = m$rb_med, rb_sd = m$rb_sd, rb_cv = m$rb_cv,
+    rb_mean_mask = m$rb_mean_mask, rb_med_mask = m$rb_med_mask,
+    rb_sd_mask = m$rb_sd_mask, rb_cv_mask = m$rb_cv_mask,
+    coef_lin = m$coef,
+    pad_tot = m$pad_tot, pad_mean = m$pad_mean, pad_sd = m$pad_sd, pad_cv = m$pad_cv,
+    ri=m$ri,ri_na=m$ri_na,fhd=m$fhd,
+    stringsAsFactors = FALSE
+  )
 }
 
 
 
+# Shannon diversity of a vertical PAD profile.
+#   profile : numeric vector, one value per height layer
+# Zero / non-finite layers are dropped (0*log(0) is NaN, log(0) is -Inf).
+# Returns NA if fewer than 2 occupied layers, where FHD is undefined/degenerate.
+.fhd <- function(profile) {
+  p <- profile[is.finite(profile) & profile > 0]
+  if (length(p) < 2L) return(NA_real_)
+  p <- p / sum(p)
+  -sum(p * log(p))
+}
 
-get_complexity_unsliced<-function(pc_norm,
-                                  rb_norm,
-                                  voxnorm,
-                                  bbox,
-                                  subplot_extent,
-                                  plot_name,
-                                  slice_low=0,
-                                  slice_up=4){
+
+
+get_complexity <- function(pc_norm,
+                           rb_norm,
+                           voxnorm,
+                           bbox,
+                           subplot_extent,
+                           plot_name,
+                           sliced    = TRUE,   # TRUE = strata, FALSE = single band
+                           nstrat    = 4,      # used only when sliced = TRUE
+                           slice_low = 0,      # used only when sliced = FALSE
+                           slice_up  = 4) {    # used only when sliced = FALSE
   
-  pc_norm<-loadRData(pc_norm)
-  list_rb<-loadRData(rb_norm)
-  voxpad<-loadRData(voxnorm)
+  pc_norm <- loadRData(pc_norm)
+  list_rb <- loadRData(rb_norm)
+  voxpad  <- loadRData(voxnorm)
   
-  summary_plot=data.frame(plot=character(),
-                          subplot=character(),
-                          time=numeric(),
-                          slice_num=numeric(),
-                          slice_low=numeric(),
-                          slice_up=numeric(),
-                          h_mean_na=numeric(),
-                          h_med_na=numeric(),
-                          h_sd_na=numeric(),
-                          h_cv_na=numeric(),
-                          h_mean=numeric(),
-                          h_med=numeric(),
-                          h_sd=numeric(),
-                          h_cv=numeric(),
-                          empty_gf=numeric(),
-                          occupied_gf=numeric(),
-                          rb_mean=numeric(),
-                          rb_med=numeric(),
-                          rb_sd=numeric(),
-                          rb_cv=numeric(),
-                          rb_mean_mask=numeric(),
-                          rb_med_mask=numeric(),
-                          rb_sd_mask=numeric(),
-                          rb_cv_mask=numeric(),
-                          coef_lin=numeric(),
-                          pad_tot=numeric(),
-                          pad_mean=numeric(),
-                          pad_sd=numeric(),
-                          pad_cv=numeric())
-  
-  
-  for(t in seq_along(list_rb)){
-    rb_norm=list_rb[[t]]
-    time=as.numeric(names(list_rb)[t])
-    
-    
-    ### metric at the plot scale for height
-    pc_slice=filter_poi(pc_norm, Z >= slice_low & Z < slice_up)
-    pc_slice_chm <- rasterize_canopy(pc_slice, res = 0.1, algorithm = p2r())
-    pc_slice_chm[pc_slice_chm > (slice_up-0.01)] <- NA
-    
-    # excluding zone without vegetation
-    h_mean_na=mean(values(pc_slice_chm),na.rm=TRUE)
-    h_med_na=median(values(pc_slice_chm),na.rm=TRUE)
-    h_sd_na=sd(values(pc_slice_chm),na.rm=TRUE)
-    h_cv_na=h_sd_na/h_mean_na
-    
-    # accounting for empty space
-    pc_slice_chm_num=pc_slice_chm
-    pc_slice_chm_num[is.na(pc_slice_chm_num)] <- 0
-    
-    h_mean=mean(values(pc_slice_chm_num),na.rm=TRUE)
-    h_med=median(values(pc_slice_chm_num),na.rm=TRUE)
-    h_sd=sd(values(pc_slice_chm_num),na.rm=TRUE)
-    h_cv=h_sd/h_mean
-    
-    ### metric at the plot scale for light
-    rb_slice=rast(apply(rb_norm[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
-    ext(rb_slice)  <- ext(pc_slice_chm)
-    crs(rb_slice)  <- crs(pc_slice_chm)
-    rb_slice_matched <- resample(rb_slice, pc_slice_chm, method = "bilinear")
-    names(rb_slice_matched)="rb"
-    rb_slice_matched[rb_slice_matched<quantile(values(rb_slice_matched),
-                                               na.rm=TRUE,probs=0.005)] <-NA
-    rb_slice_matched_mask = mask(rb_slice_matched,pc_slice_chm)
-    
-    
-    rb_mean=mean(values(rb_slice_matched),na.rm=TRUE)
-    rb_med=median(values(rb_slice_matched),na.rm=TRUE)
-    rb_sd=sd(values(rb_slice_matched),na.rm=TRUE)
-    rb_cv=rb_sd/rb_mean
-    rb_mean_mask=mean(values(rb_slice_matched_mask),na.rm=TRUE)
-    rb_med_mask=median(values(rb_slice_matched_mask),na.rm=TRUE)
-    rb_sd_mask=sd(values(rb_slice_matched_mask),na.rm=TRUE)
-    rb_cv_mask=rb_sd_mask/rb_mean_mask
-    
-    df=as.data.frame(c(pc_slice_chm,
-                       rb_slice_matched),xy=TRUE,
-                     na.rm=TRUE) %>% 
-      filter(Z<(slice_up-0.01))
-    reglin=lm(rb~Z,data=df)
-    coef = reglin$coefficients["Z"][[1]]
-    
-    
-    ## gap filling
-    gap_filling=get_gap_filling(pc_slice,voxel_size = 0.25)
-    
-    
-    ## pad
-    pad_slice=rast(apply(voxpad[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
-    ext(pad_slice)  <- ext(pc_slice_chm)
-    crs(pad_slice)  <- crs(pc_slice_chm)
-    pad_slice_matched <- resample(pad_slice, pc_slice_chm, method = "bilinear")
-    names(pad_slice_matched)="pad_sum"
-    
-    pad_tot=sum(values(pad_slice_matched),na.rm=TRUE)
-    pad_mean=mean(values(pad_slice_matched),na.rm=TRUE)
-    pad_sd=sd(values(pad_slice_matched),na.rm=TRUE)
-    pad_cv=pad_sd/pad_mean
-    
-    
-    summary_plot[nrow(summary_plot) + 1, ] <- list(
-      plot_name, "plot",time,0, slice_low, slice_up,
-      h_mean_na, h_med_na, h_sd_na, h_cv_na,
-      h_mean, h_med, h_sd, h_cv,
-      gap_filling$empty,gap_filling$occupied,
-      rb_mean, rb_med, rb_sd, rb_cv,
-      rb_mean_mask, rb_med_mask, rb_sd_mask, rb_cv_mask,
-      coef,
-      pad_tot,pad_mean,pad_sd,pad_cv
-    )
-    
-    ### do the same for subplots
-    for(sp in seq_along(subplot_extent)){
-      plot_ext=subplot_extent[[sp]]
-      plot_ext_trans <- shift(vect(plot_ext), 
-                              dx = -bbox$xmin, 
-                              dy = -bbox$ymin)
-      pc_sub_slice_chm=crop(pc_slice_chm,plot_ext_trans)
-      pc_sub_slice_chm_num=crop(pc_slice_chm_num,plot_ext_trans)
-      rb_sub_slice_matched=crop(rb_slice_matched,plot_ext_trans)
-      rb_sub_slice_matched_mask=crop(rb_slice_matched_mask,plot_ext_trans)
-      pad_sub_slice_matched=crop(pad_slice_matched,plot_ext_trans)
-      
-      
-      ### height metrics
-      h_mean_s_na=mean(values(pc_sub_slice_chm),na.rm=TRUE)
-      h_med_s_na=median(values(pc_sub_slice_chm),na.rm=TRUE)
-      h_sd_s_na=sd(values(pc_sub_slice_chm),na.rm=TRUE)
-      h_cv_s_na=h_sd_s_na/h_mean_s_na
-      
-      ### height metrics, na set as 0
-      h_mean_s=mean(values(pc_sub_slice_chm_num),na.rm=TRUE)
-      h_med_s=median(values(pc_sub_slice_chm_num),na.rm=TRUE)
-      h_sd_s=sd(values(pc_sub_slice_chm_num),na.rm=TRUE)
-      h_cv_s=h_sd_s/h_mean_s
-      
-      ### rb metrics 
-      rb_mean_s=mean(values(rb_sub_slice_matched),na.rm=TRUE)
-      rb_med_s=median(values(rb_sub_slice_matched),na.rm=TRUE)
-      rb_sd_s=sd(values(rb_sub_slice_matched),na.rm=TRUE)
-      rb_cv_s=rb_sd_s/rb_mean_s
-      
-      ### rb metrics masked
-      rb_mean_mask_s=mean(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-      rb_med_mask_s=median(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-      rb_sd_mask_s=sd(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-      rb_cv_mask_s=rb_sd_mask_s/rb_mean_mask_s
-      
-      names(rb_sub_slice_matched)="rb"
-      df_s=as.data.frame(c(pc_sub_slice_chm,
-                           rb_sub_slice_matched),xy=TRUE,
-                         na.rm=TRUE) %>% 
-        filter(Z<(slice_up-0.01))
-      if(dim(df_s)[1]>3){
-        reglin_s=lm(rb~Z,data=df_s)
-        coef_s = reglin_s$coefficients["Z"][[1]]
-      }else{coef_s=NA}
-      
-      ## gap filling
-      gap_filling_s=get_gap_filling(clip_roi(pc_slice,
-                                             sf::st_as_sf(plot_ext_trans)),
-                                    voxel_size = 0.25)
-      
-      ## pad metrics
-      pad_tot_s=sum(values(pad_sub_slice_matched),na.rm=TRUE)
-      pad_mean_s=mean(values(pad_sub_slice_matched),na.rm=TRUE)
-      pad_sd_s=sd(values(pad_sub_slice_matched),na.rm=TRUE)
-      pad_cv_s=pad_sd_s/pad_mean_s
-      
-      
-      summary_plot[nrow(summary_plot) + 1, ] <- list(
-        plot_name, names(subplot_extent[sp]),time, 0, slice_low, slice_up,
-        h_mean_s_na, h_med_s_na, h_sd_s_na, h_cv_s_na,
-        h_mean_s, h_med_s, h_sd_s, h_cv_s,
-        gap_filling_s$empty,gap_filling_s$occupied,
-        rb_mean_s, rb_med_s, rb_sd_s, rb_cv_s,
-        rb_mean_mask_s, rb_med_mask_s, rb_sd_mask_s, rb_cv_mask_s,
-        coef_s,
-        pad_tot_s,pad_mean_s,pad_sd_s,pad_cv_s
-      )
-    }
-    # }
+  # --- define the height bands to process (the only thing the toggle changes) ---
+  if (sliced) {
+    edges  <- seq(from = 0.5, by = 1, length.out = nstrat + 1)
+    slices <- data.frame(low = edges[-(nstrat + 1)],
+                         up  = edges[-1],
+                         num = seq_len(nstrat))
+  } else {
+    slices <- data.frame(low = slice_low, up = slice_up, num = 0)
   }
-  return(summary_plot)
+  
+  # subplot geometries are constant -> compute once
+  sub_geo <- lapply(subplot_extent, function(pe) {
+    shift(vect(pe), dx = -bbox$xmin, dy = -bbox$ymin)
+  })
+  
+  n_rows <- length(list_rb) * nrow(slices) * (1L + length(subplot_extent))
+  rows <- vector("list", n_rows)
+  k <- 0L
+  
+  for (t in seq_along(list_rb)) {
+    rb_arr <- list_rb[[t]]
+    time   <- as.numeric(names(list_rb)[t])
+    
+    for (s in seq_len(nrow(slices))) {
+      s_low <- slices$low[s]
+      s_up  <- slices$up[s]
+      s_num <- slices$num[s]
+      z_idx <- (s_low / 0.25):(s_up / 0.25)
+      
+      ## ---- height CHM ----
+      pc_slice <- filter_poi(pc_norm, Z >= s_low & Z < s_up)
+      chm <- rasterize_canopy(pc_slice, res = 0.1, algorithm = p2r())
+      chm[chm > (s_up - 0.01)] <- NA
+      
+      chm_num <- chm
+      chm_num[is.na(chm_num)] <- 0
+      
+      ## ---- relative brightness ----
+      rb_slice <- rast(rowSums(rb_arr[, , z_idx, drop = FALSE], dims = 2))
+      ext(rb_slice) <- ext(chm)
+      crs(rb_slice) <- crs(chm)
+      rb_matched <- resample(rb_slice, chm, method = "bilinear")
+      names(rb_matched) <- "rb"
+      thr <- quantile(values(rb_matched), na.rm = TRUE, probs = 0.005)
+      rb_matched[rb_matched < thr] <- NA
+      rb_matched_mask <- mask(rb_matched, chm)
+      
+      
+      ## ---- plant area density ----
+      pad_slice <- rast(rowSums(voxpad[, , z_idx, drop = FALSE], dims = 2))
+      ext(pad_slice) <- ext(chm)
+      crs(pad_slice) <- crs(chm)
+      pad_matched <- resample(pad_slice, chm, method = "bilinear")
+      names(pad_matched) <- "pad_sum"
+      
+      pad_cube <- rast(voxpad[, , z_idx, drop = FALSE])
+      ext(pad_cube) <- ext(chm)
+      crs(pad_cube) <- crs(chm)
+      pad_cube_matched <- resample(pad_cube, chm, method = "bilinear")
+      
+      
+      ## ---- plot-scale metrics ----
+      m <- .slice_metrics(chm, chm_num, rb_matched, rb_matched_mask,
+                          pad_matched, pad_cube, pc_slice, s_up)
+      k <- k + 1L
+      rows[[k]] <- .make_row(plot_name, "plot", time, s_num, s_low, s_up, m)
+      
+      ## ---- subplot-scale metrics ----
+      for (sp in seq_along(subplot_extent)) {
+        geo    <- sub_geo[[sp]]
+        chm_s  <- crop(chm,             geo)
+        chmn_s <- crop(chm_num,         geo)
+        rb_s   <- crop(rb_matched,      geo)
+        rbm_s  <- crop(rb_matched_mask, geo)
+        pad_s  <- crop(pad_matched,     geo)
+        cube_s <- crop(pad_cube_matched, geo)
+        pc_s   <- clip_roi(pc_slice, sf::st_as_sf(geo))
+        
+        m_s <- .slice_metrics(chm_s, chmn_s, rb_s, rbm_s, pad_s, cube_s,
+                              pc_s, s_up)
+        k <- k + 1L
+        rows[[k]] <- .make_row(plot_name, names(subplot_extent[sp]),
+                               time, s_num, s_low, s_up, m_s)
+      }
+    }
+  }
+  
+  dplyr::bind_rows(rows)
 }
 
 

@@ -5,7 +5,7 @@ tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
                             "ncdf4", "terra","sf",
                             "lidR","ITSMe"),
-               controller = crew_controller_local(workers = 10),
+               controller = crew_controller_local(workers = 8),
                error = "null")
 # lapply(c("targets",
 #          "dplyr", "ggplot2","data.table","tidyr","readxl",
@@ -64,13 +64,24 @@ mapped<-tar_map(
                                   user)),
     
     tar_target(metric3d_df,
-               get_complexity_rb(pc_norm,
-                                 rb_norm,
-                                 voxnorm,
-                                 bbox,
-                                 subplot_extent,
-                                 plot_name = plot_name,
-                                 nstrat    = 4)),
+               get_complexity(pc_norm,
+                              rb_norm,
+                              voxnorm,
+                              bbox,
+                              subplot_extent,
+                              plot_name = plot_name,
+                              sliced=TRUE,
+                              nstrat    = 4)),
+    tar_target(metric3d_df_unsliced,
+               get_complexity(pc_norm,
+                              rb_norm,
+                              voxnorm,
+                              bbox,
+                              subplot_extent,
+                              plot_name = plot_name,
+                              sliced=FALSE,
+                              slice_low=0,
+                              slice_up=4)),
     tar_target(H_ext,
                get_Hext(rb_norm,
                         pc_norm,
@@ -96,6 +107,11 @@ list(
     command = dplyr::bind_rows(!!!.x)
   ),
   tar_combine(
+    metric3d_all_unsliced,
+    mapped[["metric3d_df_unsliced"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  tar_combine(
     H_ext_all,
     mapped[["H_ext"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
@@ -111,9 +127,48 @@ list(
                       subplot=Subplot) %>% 
                mutate(subplot=paste0("subplot_",subplot))),
   tar_target(regen_metrics_subplot,
-             get_regen_metric_subplot(regen_df)),
+             get_regen_metric_subplot(regen_df,shade_df)),
   tar_target(regen_metrics_plot,
-             get_regen_metric_plot(regen_df)),
+             get_regen_metric_plot(regen_df,shade_df)),
+  tar_target(regen_cat,
+             readxl::read_excel(regen_path,sheet=2) %>%
+               dplyr::mutate(dplyr::across(c(2,4:12), as.numeric)) %>% 
+               rename(plot=Plot,
+                      subplot=Subplot) %>% 
+               mutate(subplot=paste0("subplot_",subplot)) %>% 
+               select(-c(14,13)) %>% 
+               filter(!is.na(Regeneration)) %>% 
+               group_by(plot) %>% 
+               summarize(mean_reg=mean(Regeneration),
+                         .groups = "drop"
+               ) %>% 
+               dplyr::mutate(
+                 reg_category = dplyr::ntile(mean_reg, 3),
+                 reg_category = factor(
+                   reg_category,
+                   levels = 1:3,
+                   labels = c("Low", "Medium", "High")
+                 )
+               )
+  ),
+  tar_target(regen_cat_subplot,
+             readxl::read_excel(regen_path,sheet=2) %>%
+               dplyr::mutate(dplyr::across(c(2,4:12), as.numeric)) %>% 
+               rename(plot=Plot,
+                      subplot=Subplot) %>% 
+               mutate(subplot=paste0("subplot_",subplot)) %>% 
+               select(-c(14,13)) %>% 
+               filter(!is.na(Regeneration)) %>% 
+               dplyr::mutate(
+                 reg_category = dplyr::ntile(Regeneration, 3),
+                 reg_category = factor(
+                   reg_category,
+                   levels = 1:3,
+                   labels = c("Low", "Medium", "High")
+                 )
+               )
+  ),
+  
   # Get inventory data
   tar_target(inventory_path,
              "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/germany-2025/regeneration-germany/Plot_descriptors_tree_data_Year2017_Inventory2_Germany.xls",
@@ -127,5 +182,18 @@ list(
                
   ),
   tar_target(plot_df,
-             get_adults(inventory_df))
+             get_adults(inventory_df)),
+  
+  
+  # get shade tolerance
+  tar_target(
+    shade_df,
+    read.csv("shadetolerance.csv") %>% 
+      separate(Species,into=c("Genus","species")) %>% 
+      filter(Data.set.1=="Europe") %>% 
+      mutate(species=paste0(toupper(substr(Genus,1,2)),toupper(substr(species,1,2)))) %>% 
+      filter(species %in% regen_df$Species) %>% 
+      select(species,shade_tolerance=Shade.tolerance) %>% 
+      bind_rows(data.frame(species="CRSP",shade_tolerance=1.93))
+  )
 )
