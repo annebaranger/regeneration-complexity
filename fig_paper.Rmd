@@ -42,6 +42,7 @@ loadRData <- function(fileName){
 ```{r}
 tar_load(metric3d_all)
 tar_load(metric3d_all_unsliced)
+tar_load(metric3d_all_seg)
 tar_load(regen_metrics_plot)
 tar_load(regen_metrics_subplot)
 tar_load(plot_df)
@@ -60,7 +61,7 @@ prep_pca_data <- function(regen, id_cols, plot_level) {
     select(all_of(id_cols),
            richness, H, richness_sapling, cwm_shade,   # composition
            abundance, n_sapling,                       # quantity
-           Height_increment_mn,                        # dynamics
+           Height_increment_mn,abundance_cv,                        # dynamics
            H_height, browsing) %>%                     # complexity
     inner_join(
       metric3d_all_unsliced %>%
@@ -153,8 +154,33 @@ ggplot() +
   labs(
     x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
     y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
-  )
+  )+
+  theme(legend.position = "bottom")->a
 
+pca_tot %>% 
+  filter(is.na(subplot)) %>%
+  filter(!is.na(reg_category) )%>%
+  ggplot(aes(reg_category,PC1, fill=reg_category))+
+  geom_boxplot()+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
+  labs(x="")+
+  theme_minimal() +
+  theme(legend.position = "none") -> b
+
+pca_tot %>% 
+  filter(is.na(subplot)) %>%
+  filter(!is.na(reg_category) )%>%
+  ggplot(aes(reg_category,PC2, fill=reg_category))+
+  geom_boxplot()+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
+  labs(x="")+
+  theme_minimal()  +
+  theme(legend.position = "none")-> c
+
+
+cowplot::plot_grid(a,
+                   cowplot::plot_grid(b,c,nrow=2),
+                   ncol=2)
 ```
 
 
@@ -293,26 +319,26 @@ pca_data_plot %>%
   mutate(rb_mean=log(rb_mean))->light_test
 
 
-explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv","abundance_cv")
 explaining <- c("rb_mean","rb_cv","mean","sd","mean_slope","sd_slope")
 
 
 
-std_coef <- function(d, y, x, covar = "browsing") {
+std_coef <- function(d, y, x) { #, covar = "browsing"
   d <- d %>%
-    select(all_of(c(y, x, covar))) %>%
+    select(all_of(c(y, x))) %>% #, covar
     drop_na() %>%
     mutate(across(where(is.numeric), ~ as.numeric(scale(.))))  # factors (e.g. browsing) left alone
-  f <- reformulate(c(covar, x), response = y)
+  f <- reformulate(c( x), response = y) #covar,
   unname(coef(lm(f, data = d))[x])
 }
 
 # --- bootstrap distribution of that coef ---
-boot_coef <- function(d, y, x, covar = "browsing", B = 1000) {
-  d <- d %>% select(all_of(c(y, x, covar))) %>% drop_na() %>%
+boot_coef <- function(d, y, x, B = 1000) { #, covar = "browsing"
+  d <- d %>% select(all_of(c(y, x))) %>% drop_na() %>% # , covar
       mutate(across(where(is.numeric), ~ as.numeric(scale(.)))) 
   n <- nrow(d)
-  f <- reformulate(c(covar, x), response = y)
+  f <- reformulate(c( x), response = y) # covar,
   map_dbl(seq_len(B), function(b) {
     db <- d[sample(n, n, replace = TRUE), ]  # <- move this line out of the loop to scale once
     unname(coef(lm(f, data = db))[x])
@@ -334,22 +360,22 @@ boot_long <- results %>%
 boot_long %>%
   group_by(explained, explaining) %>%
   summarise(
-    lo  = unname(quantile(coef, 0.1)),
+    lo  = unname(quantile(coef, 0.05)),
     med = unname(quantile(coef, 0.5)),
-    hi  = unname(quantile(coef, 0.9)),
+    hi  = unname(quantile(coef, 0.95)),
     .groups = "drop"
   ) %>%
   mutate(
     type = factor(case_when(
       explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
-      explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf") ~ "Quantity",
+      explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf","abundance_cv") ~ "Quantity",
       explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
     ), levels = c("Composition","Quantity","Complexity")),
     excl0 = lo > 0 | hi < 0,                         # interval excludes zero
     explained = recode(explained,
       richness="Richness\ntotal", richness_sapling="Richness\nsaplings",
       H="Shannon\nindex", cwm_shade="Shade tolerance",
-      abundance="Abundance", pad_tot="PAD\ntotal",
+      abundance="Abundance", n_sapling="Abundance \nsapling", pad_tot="PAD\ntotal",
       h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
       empty_gf="Gap fraction", H_height="Vertical\ndistribution",
       h_cv="Height\nvariability", pad_cv="PAD\nvariability",
@@ -512,24 +538,24 @@ pca_data_subplot %>%
 explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
 explaining <- c("rb_mean","rb_cv","mean","sd","mean_slope","sd_slope")
 
-std_coef <- function(d, y, x, covar = "browsing") {
+std_coef <- function(d, y, x) {#, covar = "browsing"
   d <- d %>%
-    select(all_of(c(y, x, covar, "plot"))) %>%
+    select(all_of(c(y, x, "plot"))) %>%#, covar
     drop_na() %>%
     mutate(plot = factor(plot)) %>%                              # grouping factor, kept out of scaling
     mutate(across(where(is.numeric), ~ as.numeric(scale(.))))    # factors (browsing, plot) left alone
-  f <- as.formula(paste0(y, " ~ ", covar, " + ", x, " + (1 | plot)"))
+  f <- as.formula(paste0(y, " ~ ",  " + ", x, " + (1 | plot)"))#covar,
   m <- lmer(f, data = d, control = lmerControl(calc.derivs = FALSE))
   unname(fixef(m)[x])
 }
 
 # --- bootstrap distribution of that coef ---
-boot_coef <- function(d, y, x, covar = "browsing", B = 1000) {
-  d <- d %>% select(all_of(c(y, x, covar, "plot"))) %>% drop_na() %>%
+boot_coef <- function(d, y, x, B = 1000) {# covar = "browsing",
+  d <- d %>% select(all_of(c(y, x, "plot"))) %>% drop_na() %>%#covar, 
       mutate(plot = factor(plot)) %>%
       mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
   n <- nrow(d)
-  f <- as.formula(paste0(y, " ~ ", covar, " + ", x, " + (1 | plot)"))
+  f <- as.formula(paste0(y, " ~ ", " + ", x, " + (1 | plot)"))# covar,
   map_dbl(seq_len(B), function(b) {
     db <- d[sample(n, n, replace = TRUE), ]
     m  <- suppressMessages(suppressWarnings(
@@ -610,26 +636,27 @@ sem = plot_df %>%
   left_join(light_test)
 
 
-explained <- c("richness","richness_sapling","H","abundance","pad_tot","h_mean","Height_increment_mn","empty_gf","H_height","h_cv","pad_cv")
-explaining <- c("n_trees_alive","species_richness_alive","mean_dbh_alive_cm","mean_height_alive_m","mortality_rate")
+
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
+explaining <- c("n_trees_alive","species_richness_alive","mean_dbh_alive_cm","mean_height_alive_m","mortality_rate","browsing")
 
 
 
-std_coef <- function(d, y, x, covar = "browsing") {
+std_coef <- function(d, y, x) {
   d <- d %>%
-    select(all_of(c(y, x, covar))) %>%
+    select(all_of(c(y, x))) %>%
     drop_na() %>%
     mutate(across(where(is.numeric), ~ as.numeric(scale(.))))  # factors (e.g. browsing) left alone
-  f <- reformulate(c(covar, x), response = y)
+  f <- reformulate(c( x), response = y)
   unname(coef(lm(f, data = d))[x])
 }
 
 # --- bootstrap distribution of that coef ---
-boot_coef <- function(d, y, x, covar = "browsing", B = 1000) {
-  d <- d %>% select(all_of(c(y, x, covar))) %>% drop_na() %>%
+boot_coef <- function(d, y, x,  B = 1000) {
+  d <- d %>% select(all_of(c(y, x))) %>% drop_na() %>%
       mutate(across(where(is.numeric), ~ as.numeric(scale(.)))) 
   n <- nrow(d)
-  f <- reformulate(c(covar, x), response = y)
+  f <- reformulate(c( x), response = y)
   map_dbl(seq_len(B), function(b) {
     db <- d[sample(n, n, replace = TRUE), ]  # <- move this line out of the loop to scale once
     unname(coef(lm(f, data = db))[x])
@@ -658,17 +685,19 @@ boot_long %>%
   ) %>%
   mutate(
     type = factor(case_when(
-      explained %in% c("richness","richness_sapling","H") ~ "Composition",
+      explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
       explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf") ~ "Quantity",
-      explained %in% c("H_height","h_cv","pad_cv") ~ "Complexity"
+      explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
     ), levels = c("Composition","Quantity","Complexity")),
     excl0 = lo > 0 | hi < 0,                         # interval excludes zero
     explained = recode(explained,
       richness="Richness\ntotal", richness_sapling="Richness\nsaplings",
-      H="Shannon\nindex", abundance="Abundance", pad_tot="PAD\ntotal",
+      H="Shannon\nindex", cwm_shade="Shade tolerance",
+      abundance="Abundance", pad_tot="PAD\ntotal",
       h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
       empty_gf="Gap fraction", H_height="Vertical\ndistribution",
-      h_cv="Height\nvariability", pad_cv="PAD\nvariability"),
+      h_cv="Height\nvariability", pad_cv="PAD\nvariability",
+      ri="Rumple index",fhd="Foliage height \ndiversity"),
     # explained = factor(explained, levels = rev(explained_order)),
     explaining = recode(explaining,
       n_trees_alive="Number of\n living trees", species_richness_alive="Adult richness",
@@ -788,33 +817,122 @@ semPaths(
 
 
 
-
-mod_sem = list(
-  lm(richness_sapling ~ mean_slope + rb_mean + n_trees_alive+ species_richness_alive+ mortality_rate,
-       data=sem),
-  lm(mean_slope ~  n_trees_alive+ species_richness_alive+ mortality_rate,
-       data=sem),
-  lm(rb_mean    ~ n_trees_alive+ species_richness_alive+ mortality_rate,
-       data=sem))
-
-# Extract the effects
-boot_sem = semEff::bootEff(mod_sem, R = 10, seed = 13, parallel = "no", ran.eff = "species")
-
-psem_model <- as.psem(mod_sem)
-summary(psem_model)
-piecewiseSEM:::plot.psem(
-  piecewiseSEM::as.psem(mod_sem),
-  node_attrs = data.frame(shape = "rectangle", color = "black", fillcolor = "grey"),
-  layout = "tree"
+mod_sem <- list(
+  rb_mean     = lm(rb_mean     ~ species_richness_alive,        data = sem),
+  richness_sapling = lm(richness_sapling ~ rb_mean + species_richness_alive, data = sem)
 )
+boot_sem <- semEff::bootEff(mod_sem, R = 500, seed = 13, parallel = "no")
 
 
-out = list()
-out$sem = mod_sem
-out$boot = boot_sem
 
+sem_eff <- semEff(boot_sem)
+summary(sem_eff, response = "richness_sapling")
+
+S <- sem_eff$Summary$richness
+
+
+eff_tab <- getEffTable(sem_eff)          # clean numeric table, all responses
+
+plot_df <- subset(
+  eff_tab,
+  response == "richness.sapling" & effect_type %in% c("direct", "indirect", "total")
+)
+plot_df$effect_type <- factor(plot_df$effect_type,
+                              levels = c("direct", "indirect", "total"),
+                              labels = c("Direct", "Indirect", "Total"))
+plot_df$sig <- with(plot_df, lower_ci > 0 | upper_ci < 0)
+
+ggplot(plot_df, aes(effect, predictor, colour = effect_type)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey70") +
+  geom_pointrange(
+    aes(xmin = lower_ci, xmax = upper_ci, alpha = sig),
+    position  = position_dodge(width = 0.6),
+    linewidth = 0.7, fatten = 3
+  ) +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35), guide = "none") +
+  scale_colour_manual(values = c(Direct = "#2c7fb8",
+                                 Indirect = "#d95f0e",
+                                 Total = "#31a354")) +
+  labs(x = "Standardised effect on richness", y = NULL, colour = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.y = element_blank(),
+        legend.position = "top")
 ```
 
+
+```{r}
+library(semEff)
+library(DiagrammeR)
+
+et <- getEffTable(sem_eff)   # the tidy table from before
+
+# one direct path: its coefficient + whether the CI excludes zero
+path <- function(resp, pred) {
+  x <- et[et$effect_type == "direct" & et$response == resp & et$predictor == pred, ]
+  list(coef = x$effect, sig = x$lower_ci > 0 | x$upper_ci < 0)
+}
+
+sra_mean  <- path("rb.mean",     "species.richness.alive")  # indirect path, step 1
+mean_rich <- path("richness.sapling", "rb.mean")                    # indirect path, step 2
+sra_rich  <- path("richness.sapling", "species.richness.alive")  # direct path
+
+# indirect effect (sra -> mean -> richness), straight from the table
+ind <- et[et$effect_type == "indirect" &
+          et$response == "richness.sapling" &
+          et$predictor == "species.richness.alive", "effect"]
+
+# style each arrow: colour = sign, solid = CI excludes 0, thickness = |coef|
+edge <- function(from, to, p) {
+  col <- if (p$coef >= 0) "#2166ac" else "#b2182b"
+  sprintf('%s -> %s [label = " %.2f", color = "%s", fontcolor = "%s", style = "%s", penwidth = %.2f]',
+          from, to, p$coef, col, col,
+          if (isTRUE(p$sig)) "solid" else "dashed",
+          1 + 4 * abs(p$coef))
+}
+
+dot <- sprintf('
+digraph sem {
+  graph [rankdir = LR, ranksep = 1.2, nodesep = 0.9,
+         label = "Indirect effect (species richness -> mean -> richness): %.2f",
+         labelloc = "b", fontname = "Helvetica", fontsize = 10, fontcolor = "#777777"]
+  node  [shape = box, style = "rounded,filled", fillcolor = "#f7f7f7",
+         color = "#666666", fontname = "Helvetica", fontsize = 12, margin = "0.22,0.13"]
+  edge  [fontname = "Helvetica", fontsize = 11, arrowsize = 0.8]
+
+  sra  [label = "species richness\\n(alive)"]
+  mean [label = "mean"]
+  rich [label = "richness"]
+
+  %s
+  %s
+  %s
+}',
+  ind,
+  edge("sra",  "mean", sra_mean),
+  edge("mean", "rich", mean_rich),
+  edge("sra",  "rich", sra_rich))
+
+grViz(dot)
+```
+
+```{r}
+library(piecewiseSEM)
+psem_mod <- psem(
+  lm(richness ~ mean + species_richness_alive, data = sem),
+  lm(mean ~ species_richness_alive,            data = sem),
+  data = sem
+)
+
+plot(
+  psem_mod,
+  show       = "std",     # standardized coefficients on the arrows
+  digits     = 2,
+  ns_dashed  = TRUE,      # non-significant paths dashed
+  node_attrs = data.frame(shape = "rectangle", fillcolor = "#f7f7f7",
+                          color = "#666666", fontname = "Helvetica"),
+  edge_attrs = data.frame(fontname = "Helvetica")
+)
+```
 
 # species analysis
 

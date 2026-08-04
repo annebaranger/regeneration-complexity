@@ -88,8 +88,28 @@ mapped<-tar_map(
                         subplot_extent,
                         bbox,
                         plot_name,
-                        targets=c(0.5,0.88)))
-  )
+                        targets=c(0.5,0.88))),
+    tar_target(file_segmented,
+               file.segmented(path_plot,
+                              plot_name,
+                              folders=c("regen","hesitation"))),
+    tar_target(pc_norm_seg,
+               get_pc_norm_regen(path_plot,
+                                 plot_name,
+                                 file_segmented,
+                                 dtm,
+                                 bbox)),
+    tar_target(
+      metric3d_df_reg, {
+        targets::tar_cancel(is.null(pc_norm_seg))
+        get_below_canopy_complexity(
+          pc_norm_seg, rb_norm, voxnorm, bbox,
+          subplot_extent, plot_name,
+          voxel_size = 0.25, chm_res = 0.1
+        )
+      }
+    )
+    )
 
 
 list(
@@ -109,6 +129,11 @@ list(
   tar_combine(
     metric3d_all_unsliced,
     mapped[["metric3d_df_unsliced"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  tar_combine(
+    metric3d_all_seg,
+    mapped[["metric3d_df_reg"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
   ),
   tar_combine(

@@ -1242,3 +1242,197 @@ get_adults <- function(inventory_df){
       .groups = "drop"
     )
 }
+
+
+### SEGMENTED PLOTS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+file.segmented<-function(path_plot,
+                         plot_name,
+                         folders=c("regen","hesitation")){
+  path_trees=file.path(path_plot,
+                       paste0(plot_name,"-processing"),
+                       "trees",folders)
+  is.segmented=sum(file.exists(path_trees))
+  
+  if(is.segmented>0){
+    file=paste0("output/dbh_seg_",plot_name,".csv")
+  }else file=NULL
+  return(file)
+}
+
+get_pc_norm_regen<-function(path_plot,
+                            plot_name,
+                            file.segmented,
+                            dtm,
+                            bbox){
+  if(!is.null(file.segmented)){
+    
+    ## gather trees txt files -----------------------
+    dbh_seg=read.csv(file.segmented) %>% 
+      select(-any_of("X")) %>%
+      mutate(across(-any_of("File"), as.numeric)) %>% 
+      filter(DBH<0.12|is.na(DBH)) %>% 
+      mutate(file_long=case_when(grepl("hesit",File)~file.path(path_plot,
+                                                               paste0(plot_name,"-processing"),
+                                                               "trees","hesitation",File),
+                                 grepl("regen",File)~file.path(path_plot,
+                                                               paste0(plot_name,"-processing"),
+                                                               "trees","regen",File)))
+    
+    files=dbh_seg$file_long
+    
+    ## load dtm ------------------------------------
+    dtm_rast <- rast(dtm)
+    
+    
+    ## load trees files and merge in LAS -----------
+    read_xyz <- function(fn) {
+      dt <- read_tree_pc(fn)
+      setDT(dt)
+      dt <- dt[
+        is.finite(X) &
+          is.finite(Y) &
+          is.finite(Z)
+      ]
+      dt[]
+    }
+    
+    tree_list <- lapply(files, read_xyz)
+    tree_list <- Filter(Negate(is.null), tree_list)
+    merged <- rbindlist( tree_list,
+                         use.names = TRUE,
+                         fill = TRUE)
+    las_merged=LAS(merged[, c("X", "Y", "Z")])
+    
+    las_clipped <- clip_rectangle(las_merged,
+                                  xleft   = bbox$xmin,
+                                  ybottom = bbox$ymin,
+                                  xright  = bbox$xmax,
+                                  ytop    = bbox$ymax)
+    
+    
+    # normalize pc height ---------------------------
+    las_norm <- normalize_height(las_clipped, dtm_rast)
+    
+    las_norm@data$X <- las_norm@data$X - min(las_norm@data$X)
+    las_norm@data$Y <- las_norm@data$Y - min(las_norm@data$Y)
+    
+    las_norm <- las_update(las_norm)
+    
+    # las_clip <- filter_poi(las_norm, Z < 5)
+    
+    path_las=paste0("output/",plot_name,"_pcnorm_regen.rdata")
+    save(las_norm,file=path_las)
+  }else{path_las=NULL}
+  return(path_las)
+}
+
+# 
+# pc_norm_seg=tar_read(pc_norm_seg_GER02)
+# rb_norm=tar_read(rb_norm_GER02)
+# voxnorm=tar_read(voxnorm_GER02)
+# bbox=tar_read(bbox_GER02)
+# subplot_extent=tar_read(subplot_extent_GER02)
+# plot_name="GER02"
+# sliced=FALSE
+get_below_canopy_complexity <- function(pc_norm,
+                                        rb_norm,
+                                        voxnorm,
+                                        bbox,
+                                        subplot_extent,
+                                        plot_name,
+                                        voxel_size = 0.25,
+                                        chm_res    = 0.1) {
+  
+  pc_norm <- loadRData(pc_norm)
+  list_rb <- loadRData(rb_norm)
+  voxpad  <- loadRData(voxnorm)
+  
+  chm <- rasterize_canopy(pc_norm, res = chm_res, algorithm = p2r())   # full canopy
+  
+  # ---- below-canopy keep-mask for ONE voxel array, on its own grid -----------
+  # keep[i, j, a] = TRUE when layer a's top (a * voxel_size) is at/below canopy.
+  make_keep <- function(arr) {
+    tmpl <- rast(arr[, , 1]); ext(tmpl) <- ext(chm); crs(tmpl) <- crs(chm)
+    cv   <- resample(chm, tmpl, method = "max")
+    tl   <- as.matrix(cv, wide = TRUE) / voxel_size          # [nr, nc] for THIS array
+    kp   <- outer(tl, seq_len(dim(arr)[3]), function(t, a) a <= t)
+    kp[is.na(kp)] <- FALSE
+    list(keep = kp, no_canopy = is.na(tl))
+  }
+  
+  rb1    <- list_rb[[1]]
+  km_rb  <- make_keep(rb1)       # mask shaped like the rb arrays
+  km_pad <- make_keep(voxpad)    # mask shaped like voxpad
+  
+  # ---- below-canopy PAD (time-invariant): matched raster + cube for FHD ------
+  padkeep   <- voxpad * km_pad$keep
+  pad_below <- rowSums(padkeep, dims = 2, na.rm = TRUE)
+  # pad_below[km_pad$no_canopy] <- NA
+  pad_slice <- rast(pad_below); ext(pad_slice) <- ext(chm); crs(pad_slice) <- crs(chm)
+  pad_matched <- resample(pad_slice, chm, method = "bilinear")
+  names(pad_matched) <- "pad_sum"
+  
+  padkeep_cube <- rast(padkeep); ext(padkeep_cube) <- ext(chm); crs(padkeep_cube) <- crs(chm)
+  
+  # ---- spatial units: plot (geo = NULL) + subplots ---------------------------
+  sub_geo <- lapply(subplot_extent, function(pe)
+    shift(vect(pe), dx = -bbox$xmin, dy = -bbox$ymin))
+  units <- c(list(list(name = "plot", geo = NULL)),
+             lapply(seq_along(subplot_extent), function(sp)
+               list(name = names(subplot_extent)[sp], geo = sub_geo[[sp]])))
+  
+  cropu <- function(r, geo) if (is.null(geo)) r else crop(r, geo)
+  
+  # ---- pre-crop the time-invariant inputs once per unit ----------------------
+  unit_static <- lapply(units, function(u) {
+    chm_u     <- cropu(chm, u$geo)
+    chm_num_u <- chm_u; chm_num_u[is.na(chm_num_u)] <- 0
+    list(
+      name     = u$name,
+      geo      = u$geo,
+      chm      = chm_u,
+      chm_num  = chm_num_u,
+      pad      = cropu(pad_matched,  u$geo),
+      pad_cube = cropu(padkeep_cube, u$geo),
+      pc_gap   = if (is.null(u$geo)) pc_norm else clip_roi(pc_norm, sf::st_as_sf(u$geo))
+    )
+  })
+  
+  n_rows <- length(list_rb) * length(units)
+  rows <- vector("list", n_rows)
+  k <- 0L
+  
+  # ---- time loop: only rb (light) varies -------------------------------------
+  for (t in seq_along(list_rb)) {
+    rb_arr <- list_rb[[t]]
+    time   <- as.numeric(names(list_rb)[t])
+    
+    rb_below <- rowSums(rb_arr * km_rb$keep, dims = 2, na.rm = TRUE)
+    # rb_below[km_rb$no_canopy] <- NA
+    rb_slice <- rast(rb_below); ext(rb_slice) <- ext(chm); crs(rb_slice) <- crs(chm)
+    rb_matched <- resample(rb_slice, chm, method = "bilinear")
+    names(rb_matched) <- "rb"
+    thr <- quantile(values(rb_matched), na.rm = TRUE, probs = 0.005)
+    rb_matched[rb_matched < thr] <- NA
+    rb_matched_mask <- mask(rb_matched, chm)
+    
+    for (us in unit_static) {
+      rb_u  <- cropu(rb_matched,      us$geo)
+      rbm_u <- cropu(rb_matched_mask, us$geo)
+      
+      m <- .slice_metrics(us$chm, us$chm_num, rb_u, rbm_u,
+                          us$pad, us$pad_cube, us$pc_gap,
+                          slice_up = Inf, voxel_size = voxel_size)
+      
+      k <- k + 1L
+      rows[[k]] <- .make_row(plot_name, us$name, time,
+                             slice_num = 0, slice_low = 0, slice_up = NA_real_, m)
+    }
+  }
+  
+  dplyr::bind_rows(rows)
+}
