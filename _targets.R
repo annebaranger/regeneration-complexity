@@ -3,9 +3,9 @@ library(tarchetypes)
 library(crew)
 tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
-                            "ncdf4", "terra","sf",
+                            "ncdf4", "terra","sf","purrr","tibble","mgcv",
                             "lidR","ITSMe"),
-               controller = crew_controller_local(workers = 8),
+               controller = crew_controller_local(workers = 6),
                error = "null")
 # lapply(c("targets",
 #          "dplyr", "ggplot2","data.table","tidyr","readxl",
@@ -85,10 +85,17 @@ mapped<-tar_map(
     tar_target(H_ext,
                get_Hext(rb_norm,
                         pc_norm,
+                        voxnorm,
                         subplot_extent,
                         bbox,
                         plot_name,
-                        targets=c(0.5,0.88))),
+                        targets        = c(0.5, 0.9),
+                        z_ref          = 4.5,
+                        voxel_size     = 0.25,
+                        pad_unit       = c("density"),
+                        smooth_columns = TRUE,
+                        touches        = FALSE,
+                        return_rasters = FALSE)),
     tar_target(file_segmented,
                file.segmented(path_plot,
                               plot_name,
@@ -194,7 +201,7 @@ list(
                )
   ),
   
-  # Get inventory data
+  # Get inventory data ─────────────────────────────────────────────────────────
   tar_target(inventory_path,
              "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/germany-2025/regeneration-germany/Plot_descriptors_tree_data_Year2017_Inventory2_Germany.xls",
              format="file"
@@ -210,7 +217,7 @@ list(
              get_adults(inventory_df)),
   
   
-  # get shade tolerance
+  # get shade tolerance ─────────────────────────────────────────────────────────
   tar_target(
     shade_df,
     read.csv("shadetolerance.csv") %>% 
@@ -220,5 +227,58 @@ list(
       filter(species %in% regen_df$Species) %>% 
       select(species,shade_tolerance=Shade.tolerance) %>% 
       bind_rows(data.frame(species="CRSP",shade_tolerance=1.93))
+  ),
+  
+  # meta data for plotting ─────────────────────────────────────────────────────
+  tar_target(
+    var_meta,
+    tribble(
+      ~variable,             ~type,          ~label,
+      "richness",            "Composition",  "Richness \ntotal",
+      "richness_sapling",    "Composition",  "Richness \nsaplings",
+      "H",                   "Composition",  "Shannon \nindex",
+      "cwm_shade",           "Composition",  "Shade tolerance",
+      "abundance",           "Quantity",     "Abundance",
+      "abundance_cv",        "Quantity",     "Abundance CV",
+      "n_sapling",           "Quantity",     "Abundance of \nsaplings",
+      "h_mean",              "Quantity",     "Mean \nheight",
+      "pad_tot",             "Quantity",     "PAD \ntotal",
+      "empty_gf",            "Quantity",     "Gap fraction",
+      "Height_increment_mn", "Quantity",     "Height \nincrement",
+      "H_height",            "Complexity",   "Vertical \ndistribution",
+      "h_cv",                "Complexity",   "Height \nvariability",
+      "pad_cv",              "Complexity",   "PAD \nvariability",
+      "ri",                  "Complexity",   "Rumple index",
+      "fhd",                 "Complexity",   "Foliage height \ndiversity",
+      "browsing",            "Other",        "Browsing",
+      "rb_mean",             "Light",        "Radiative\nbudget mean",
+      "rb_cv",               "Light",        "Radiative\nbudget CV",
+      "rb_sd",               "Light",        "Radiative\nbudget SD",
+      "ext_ref_agg",         "Light",        "Mean extinction \n at 4.5m",
+      "ext_ref_cv",          "Light",        "Mean extinction \n at 4.5m CV",
+      "ext_ref_sd",          "Light",        "Mean extinction \n at 4.5m SD",
+      "padAbove_agg",        "PAD",          "PAD above \nregeneration",
+      "padAbove_cv",         "PAD",          "PAD above \nCV",
+      "padAbove_sd",         "PAD",          "PAD above \nSD",
+      "padTot_agg",          "PAD",          "PAD total",
+      "padTot_cv",           "PAD",          "PAD total CV",
+      "padTot_sd",           "PAD",          "PAD total sd",
+      "rb_ref_agg",          "Light",        "RB. at 4.5m",
+      "rb_ref_cv",           "Light",        "RB. at 4.5m \nCV",
+      "rb_ref_sd",           "Light",        "RB. at 4.5m \nSD",
+      "slope_cross_agg",     "Light",        "Light profile slope \nat ext = ",
+      "slope_cross_cv",      "Light",        "Light profile slope, CV \nat ext = ",
+      "slope_cross_sd",      "Light",        "Light profile slope, SD \nat ext = ",
+      "slope_ref_agg",       "Light",        "Light profile slope \nat 4.5m",
+      "slope_ref_cv",        "Light",        "Light profile slope, CV\nat 4.5m",
+      "slope_ref_sd",        "Light",        "Light profile slope, SD\nat 4.5m",
+      "z_cross_agg",         "Light",        "Height\nat ext = ",
+      "z_cross_cv",          "Light",        "Height, CV\nat ext = ",
+      "z_cross_sd",          "Light",        "Height, SD\nat ext = ",
+      "zPAD50_agg",          "PAD",          "Height at\n 50% of max(PAD)",
+      "zPAD50_cv",           "PAD",          "Height (CV) at\n 50% of max(PAD)",
+      "zPAD50_sd",           "PAD",          "Height (SD) at\n 50% of max(PAD)"
+    )    
   )
-)
+  )
+

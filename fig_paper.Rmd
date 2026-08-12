@@ -10,7 +10,7 @@ output: html_document
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE,message=FALSE)
 library(targets)
 lapply(c("stringr","tidyr","dplyr","tibble","tidyverse", # data analysis
-         "ggplot2","viridis", "ggridges","wesanderson","ggridges","ggrepel","ggnewscale",# plot
+         "ggplot2","viridis", "ggridges","wesanderson","ggridges","ggrepel","ggnewscale","ggside", # plot
          "factoextra", "nlme","modi","rstan","shinystan","boot", "rstatix","lme4",# stat & models
          "rworldmap" # geographic data #terre, sf
          ),require,character.only=TRUE)
@@ -54,14 +54,14 @@ tar_load(regen_cat_subplot)
 # Regeneration structure pattern
 
 
-```{r}
+```{r, fig.width=10, fig.height=6}
 prep_pca_data <- function(regen, id_cols, plot_level) {
   regen %>%
     mutate(across(c(richness_sapling, n_sapling), ~ replace_na(.x, 0))) %>%
     select(all_of(id_cols),
            richness, H, richness_sapling, cwm_shade,   # composition
            abundance, n_sapling,                       # quantity
-           Height_increment_mn,abundance_cv,                        # dynamics
+           Height_increment_mn,abundance_cv,                        # dynamics 
            H_height, browsing) %>%                     # complexity
     inner_join(
       metric3d_all_unsliced %>%
@@ -86,25 +86,6 @@ pca_tot <- bind_rows(pca_data_plot, pca_data_subplot) %>%
   left_join(regen_cat) %>%
   bind_cols(as_tibble(predict(pca_res, .[, colnames(pca_df)])[, 1:2]))
 
-var_meta <- tribble(
-  ~variable,             ~type,          ~label,
-  "richness",            "Composition",  "Richness \ntotal",
-  "richness_sapling",    "Composition",  "Richness \nsaplings",
-  "H",                   "Composition",  "Shannon \nindex",
-  "cwm_shade",           "Composition",  "Shade tolerance",
-  "abundance",           "Quantity",     "Abundance",
-  "n_sapling",           "Quantity",     "Abundance of \nsaplings",
-  "h_mean",              "Quantity",     "Mean \nheight",
-  "pad_tot",             "Quantity",     "PAD \ntotal",
-  "empty_gf",            "Quantity",     "Gap fraction",
-  "Height_increment_mn", "Quantity",     "Height \nincrement",
-  "H_height",            "Complexity",   "Vertical \ndistribution",
-  "h_cv",                "Complexity",   "Height \nvariability",
-  "pad_cv",              "Complexity",   "PAD \nvariability",
-  "ri",                  "Complexity",   "Rumple index",
-  "fhd",                 "Complexity",   "Foliage height \ndiversity",
-  "browsing",            "Other",        "Browsing"
-)
 
 v <- get_pca_var(pca_res)
 var_coord <- tibble(
@@ -117,70 +98,68 @@ var_coord <- tibble(
   left_join(var_meta, by = "variable") %>%
   mutate(type = replace_na(type, "Other"))
 
+pts <- pca_tot %>%
+  filter(is.na(subplot)) %>%
+  mutate(plot_level = "Plot")
+
 ggplot() +
   geom_point(
-    data = pca_tot %>%
-      mutate(plot_level = case_when(
-        is.na(subplot) ~ "Plot",
-        !is.na(subplot) ~ "Subplot"
-      )),
+    data = pts,
     aes(PC1, PC2, shape = plot_level, size = plot_level, color = reg_category)
   ) +
+  geom_xsideboxplot(
+    data = pts %>% filter(!is.na(reg_category)),
+    aes(x = PC1, y = reg_category, fill = reg_category),
+    orientation = "y", outliers = FALSE
+  ) +
+  geom_ysideboxplot(
+    data = pts %>% filter(!is.na(reg_category)),
+    aes(y = PC2, x = reg_category, fill = reg_category),
+    orientation = "x", outliers = FALSE
+  )+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
   scale_shape_manual(name = "Spatial scale", values = c("Plot" = 19, "Subplot" = 1)) +
   scale_size_manual(name = "Spatial scale", values = c("Plot" = 2.5, "Subplot" = 1.5)) +
-  scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
-
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  guides(color="none",size="none",shape="none")+
   new_scale_color() +
-
   geom_segment(
     data = var_coord,
-    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
-    arrow = arrow(length = unit(0.20, "cm")),
-    lineend = "round"
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5, color = type),
+    arrow = arrow(length = unit(0.20, "cm")), lineend = "round"
   ) +
   geom_text_repel(
     data = var_coord,
-    aes(x = PC1*5, y = PC2*5, label = label,  color = type), #alpha = contrib,
+    aes(x = PC1*5, y = PC2*5, label = label, color = type),
     size = 3, show.legend = FALSE
   ) +
   scale_color_brewer(name = "Variable type", palette = "Dark2") +
-
-  coord_equal() +
   theme_minimal() +
-  guides(
-    alpha = "none",
-    color = guide_legend(override.aes = list(alpha = 1))
-  ) +
+  # shrink the side panels + hide their axes
+  theme(
+    # --- main panel: black frame ---
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
+    
+    # --- side panels: small ---
+    ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
+    
+    # --- side panels: no grid ---
+    ggside.panel.grid = element_blank(),
+    
+    # --- side panels: no frame/border of their own, hide their axes ---
+    ggside.panel.border = element_blank(),
+    ggside.panel.background = element_blank(),
+    ggside.axis.text  = element_blank(),
+    ggside.axis.ticks = element_blank(),
+    
+  legend.position = "bottom"
+  )+
   labs(
     x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
     y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
-  )+
-  theme(legend.position = "bottom")->a
-
-pca_tot %>% 
-  filter(is.na(subplot)) %>%
-  filter(!is.na(reg_category) )%>%
-  ggplot(aes(reg_category,PC1, fill=reg_category))+
-  geom_boxplot()+
-  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
-  labs(x="")+
-  theme_minimal() +
-  theme(legend.position = "none") -> b
-
-pca_tot %>% 
-  filter(is.na(subplot)) %>%
-  filter(!is.na(reg_category) )%>%
-  ggplot(aes(reg_category,PC2, fill=reg_category))+
-  geom_boxplot()+
-  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
-  labs(x="")+
-  theme_minimal()  +
-  theme(legend.position = "none")-> c
-
-
-cowplot::plot_grid(a,
-                   cowplot::plot_grid(b,c,nrow=2),
-                   ncol=2)
+  ) + 
+  coord_cartesian()->c
+c
 ```
 
 
@@ -198,37 +177,20 @@ cowplot::plot_grid(a,
 ```{r}
 metric3d_all_unsliced %>% 
   filter(subplot=="plot",time==12) %>% 
-  # filter(slice_num==1) %>% 
   select(plot,
          rb_mean,rb_cv) %>% 
   left_join(H_ext_all %>% 
-              filter(extinction==0.88,subplot=="plot",time==12)) %>% 
+              filter(target==0.9,subplot=="plot",time==12)) %>% 
   mutate(rb_mean=log(rb_mean)) %>% 
-  rename("Radiative\nbudget mean"=rb_mean, "Radiative\nbudget var."=rb_cv,
-      "Half-ext. \nheight"=mean, "Half-ext.\nheight (SD)"=sd,
-      "Extinction\nspeed"=mean_slope, "Extinction\nspeed (SD)"=sd_slope) %>% 
   left_join(regen_cat)->light_pca
 
+df_pca=light_pca[,c("rb_mean","z_cross_agg","ext_ref_agg","padTot_agg",
+                  "padAbove_agg","zPAD50_agg")]#"rb_ref_agg","padAbove_cv","rb_cv",
 
+pca_res <- prcomp(df_pca,
+                  center = TRUE, scale. = TRUE)
 
-# Run PCA (center and scale recommended)
-pca_res <- prcomp(light_pca[,c("Radiative\nbudget mean", "Radiative\nbudget var.",
-      "Half-ext. \nheight", "Half-ext.\nheight (SD)",
-      "Extinction\nspeed", "Extinction\nspeed (SD)")], center = TRUE, scale. = TRUE)
-
-# fviz_pca_biplot(
-#   pca_res,
-#   col.var = "contrib",            # color by contribution
-#   gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-#   repel = TRUE
-# ) 
-# 
-# GGally::ggpairs(light_pca)
-
-
-light_pca_pred = cbind(light_pca,predict(pca_res,light_pca[,c("Radiative\nbudget mean", "Radiative\nbudget var.",
-      "Half-ext. \nheight", "Half-ext.\nheight (SD)",
-      "Extinction\nspeed", "Extinction\nspeed (SD)")])[,c(1,2)])
+light_pca_pred = cbind(light_pca,predict(pca_res,df_pca)[,c(1,2)])
 
 
 var <- get_pca_var(pca_res)
@@ -241,21 +203,22 @@ var_coord$contrib <- var$contrib[, 1] + var$contrib[, 2]
 var_coord$cos2 <- var$cos2[, 1] + var$cos2[, 2]
 
 
-var_coord=var_coord %>% 
-  mutate(type=case_when(variable%in%c("Radiative\nbudget mean", "Half-ext. \nheight", "Extinction\nspeed")~"Mean",
-                        variable%in%c("Radiative\nbudget var.","Half-ext.\nheight (SD)","Extinction\nspeed (SD)")~"Variability"))
-
+var_coord=var_coord %>%
+  left_join(var_meta,by="variable") %>% 
+  mutate(label=case_when(variable=="slope_cross_agg"~paste0(label," 0.9"),
+                         variable=="z_cross_agg"~paste0(label," 0.9"),
+                         TRUE~label))
 
 ggplot() +
   geom_point(
     data = light_pca_pred,
     aes(PC1, PC2, color = reg_category),
-    size=2.5
+    size=2.5,show.legend = FALSE
   ) +
   scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
-
+  
   new_scale_color() +
-
+  
   geom_segment(
     data = var_coord,
     aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
@@ -264,11 +227,23 @@ ggplot() +
   ) +
   geom_text_repel(
     data = var_coord,
-    aes(x = PC1*5, y = PC2*5, label = variable,  color = type), #alpha = contrib,
+    aes(x = PC1*5, y = PC2*5, label = label,  color = type), #alpha = contrib,
     size = 3, show.legend = FALSE
   ) +
+  geom_xsideboxplot(
+    data = light_pca_pred %>% filter(!is.na(reg_category)),
+    aes(x = PC1, y = reg_category, fill = reg_category),
+    orientation = "y", outliers = FALSE
+  ) +
+  geom_ysideboxplot(
+    data = light_pca_pred %>% filter(!is.na(reg_category)),
+    aes(y = PC2, x = reg_category, fill = reg_category),
+    orientation = "x", outliers = FALSE
+  )+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
   scale_color_brewer(name = "Variable type", palette = "Dark2") +
-
+  guides(color="none")+
+  
   coord_equal() +
   theme_minimal() +
   guides(
@@ -278,49 +253,186 @@ ggplot() +
   labs(
     x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
     y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
+  )+
+  theme(
+    # --- main panel: black frame ---
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
+    
+    # --- side panels: small ---
+    ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
+    
+    # --- side panels: no grid ---
+    ggside.panel.grid = element_blank(),
+    
+    # --- side panels: no frame/border of their own, hide their axes ---
+    ggside.panel.border = element_blank(),
+    ggside.panel.background = element_blank(),
+    ggside.axis.text  = element_blank(),
+    ggside.axis.ticks = element_blank(),
+    
+  legend.position = "bottom"
   )
 
 
+# light_pca %>% 
+#   pivot_longer(cols=-c("plot","time","subplot","target","reg_category","mean_reg")) %>% 
+#   filter(is.finite(value)) %>%    
+#   group_by(name) %>% 
+#   mutate(value=scale(value)) %>% 
+#   ungroup() %>% 
+#   select(plot,subplot,reg_category,name,value) %>% 
+#   left_join(var_meta,
+#             by=c("name"="variable")) %>% 
+#   ggplot(aes(label,value,fill=reg_category))+
+#   geom_boxplot()+
+#   scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey")
 
-metric3d_all_unsliced %>% 
-  filter(subplot=="plot",time==12,plot!="GER18") %>% 
+```
+
+### comparative effects of plant material and light distribution on the structure of regeneration
+
+```{r}
+d <- metric3d_all_unsliced %>% 
+  filter(subplot=="plot",time==12) %>% 
   select(plot,
          rb_mean,rb_cv) %>% 
   left_join(H_ext_all %>% 
-              filter(extinction==0.88,subplot=="plot",time==12)) %>% 
-  rename("Radiative\nbudget mean"=rb_mean, "Radiative\nbudget var."=rb_cv,
-      "Half-ext. \nheight"=mean, "Half-ext.\nheight (SD)"=sd,
-      "Extinction\nspeed"=mean_slope, "Extinction\nspeed (SD)"=sd_slope) %>% 
-  pivot_longer(cols=-c("plot","time","subplot","extinction")) %>% 
-  filter(is.finite(value)) %>% 
-  group_by(name) %>% 
-  mutate(value=scale(value)) %>% 
-  ungroup() %>% 
-  select(plot,subplot,name,value) %>% 
+              filter(target==0.9,subplot=="plot",time==12)) %>% 
+  mutate(rb_mean=log(rb_mean)) %>% 
   left_join(regen_cat) %>% 
-  # filter(subplot=="plot") %>% 
-  ggplot(aes(name,value,fill=reg_category))+
-  geom_boxplot()+
-  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey")
+  select(any_of(c("plot","reg_category","rb_mean","z_cross_agg","ext_ref_agg","padTot_agg",
+                  "padAbove_agg","zPAD50_agg"))) %>%
+  pivot_longer(cols = -c("plot","reg_category")) %>%
+  filter(!is.na(reg_category)) %>%
+  mutate(name=factor(name,levels =c("rb_mean","ext_ref_agg","z_cross_agg","padTot_agg",
+                  "padAbove_agg","zPAD50_agg") )) %>% 
+  group_by(name) %>% mutate(value = as.numeric(scale(value))) %>%
+  ungroup() %>%
+  left_join(var_meta, by = c("name" = "variable")) %>% 
+  arrange(name) %>%        # type's level order drives it
+  mutate(label=case_when(name=="slope_cross_agg"~paste0(label," 0.9"),
+                         name=="z_cross_agg"~paste0(label," 0.9"),
+                         TRUE~label),
+         label = fct_inorder(label))
+
+
+d <- d %>% mutate(reg_category = factor(reg_category))
+
+cld_one <- function(df) {
+  lev <- levels(droplevels(df$reg_category))
+  if (length(lev) < 2) return(tibble(reg_category = lev, letter = ""))
+  
+  kw <- kruskal.test(value ~ droplevels(reg_category), data = df)
+  if (is.na(kw$p.value) || kw$p.value > 0.05)
+    return(tibble(reg_category = lev, letter = "a"))   # no differences
+  
+  dt <- dunn_test(df, value ~ reg_category, p.adjust.method = "BH")
+  pv <- setNames(dt$p.adj, paste(dt$group1, dt$group2, sep = "-"))
+  l  <- multcompLetters(pv)$Letters
+  tibble(reg_category = names(l), letter = unname(l))
+}
+
+cld_df <- d %>%
+  group_by(type, label) %>%
+  group_modify(~ cld_one(.x)) %>%
+  ungroup() %>%
+  mutate(reg_category = factor(reg_category, levels = levels(d$reg_category))) %>%
+  left_join(
+    d %>% group_by(type, label, reg_category) %>%
+      summarise(y = max(value, na.rm = TRUE), .groups = "drop"),
+    by = c("type", "label", "reg_category")
+  )
+
+
+ggplot(d, aes(label, value, fill = reg_category)) +
+  geom_boxplot(position = position_dodge(width = 0.8, preserve = "single"),
+               width=0.5,outlier.shape = NA) +
+  geom_point(aes(color=reg_category),
+             position = position_jitterdodge(jitter.width = 0.15,
+                                             dodge.width = 0.8,
+                                             seed = 1),
+             size = 1, alpha = 0.8, shape = 16,
+             show.legend = FALSE) +
+  geom_text(data = cld_df,
+            aes(x = label, y = y + 0.25, label = letter, group = reg_category),
+            position = position_dodge(width = 0.8),
+            inherit.aes = FALSE, size = 3, vjust = 0) +
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  facet_grid(~type, scales = "free_x") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12)))+
+  labs(y="Scaled values",x="")+
+  theme_minimal(base_size = 9)+
+  theme(legend.position = "none")->a
+
+
+ggplot() +
+  geom_point(
+    data = light_pca_pred,
+    aes(PC1, PC2, color = reg_category),
+    size=2.5,show.legend = TRUE
+  ) +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
+  
+  new_scale_color() +
+  
+  geom_segment(
+    data = var_coord,
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
+    arrow = arrow(length = unit(0.20, "cm")),
+    lineend = "round"
+  ) +
+  geom_text_repel(
+    data = var_coord,
+    aes(x = PC1*5, y = PC2*5, label = label,  color = type), #alpha = contrib,
+    size = 3, show.legend = FALSE
+  ) +
+  scale_color_brewer(name = "Variable type", palette = "Dark2") +
+  guides(color="none")+
+  geom_hline(yintercept = 0, colour = "grey85", linewidth = 0.3) +
+  geom_vline(xintercept = 0, colour = "grey85", linewidth = 0.3) +  
+  coord_cartesian() +
+  theme_minimal(base_size = 9) +
+
+  guides(
+    alpha = "none",
+    color = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  labs(
+    x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
+    y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
+  )+
+  theme(
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
+    legend.position = "left"
+  )->b
+
+
+cowplot::plot_grid(b+theme(legend.position="none"),a,ncol=2,align = "h", axis = "tb",
+                   rel_widths = c(1, 1.5))
+
 
 ```
+
+
 
 ### effect size
 
 ```{r}
 pca_data_plot %>% 
-  left_join(metric3d_all %>% 
+  left_join(metric3d_all_unsliced %>% 
               filter(subplot=="plot",time==12) %>% 
-              filter(slice_num==1) %>% 
+              # filter(slice_num==1) %>% 
               select(plot,
                      rb_mean,rb_cv)) %>% 
   left_join(H_ext_all %>% 
-              filter(extinction==0.5,subplot=="plot",time==12)) %>% 
-  mutate(rb_mean=log(rb_mean))->light_test
+              filter(target==0.5,subplot=="plot",time==12)) %>% 
+  mutate(rb_mean=log(rb_mean),
+         rb_cv=log(rb_cv))->light_test
 
 
 explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv","abundance_cv")
-explaining <- c("rb_mean","rb_cv","mean","sd","mean_slope","sd_slope")
+explaining <- c("rb_mean","z_cross_agg","ext_ref_agg","slope_cross_agg","rb_cv","z_cross_cv","ext_ref_cv","slope_cross_cv")
 
 
 
@@ -365,28 +477,15 @@ boot_long %>%
     hi  = unname(quantile(coef, 0.95)),
     .groups = "drop"
   ) %>%
+  pivot_longer(cols=c("explained","explaining")) %>% 
+  left_join(var_meta,by=c("value"="variable")) %>% 
+  select(-value) %>% 
+  pivot_wider(names_from="name",values_from = c("label","type")) %>% 
   mutate(
-    type = factor(case_when(
-      explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
-      explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf","abundance_cv") ~ "Quantity",
-      explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
-    ), levels = c("Composition","Quantity","Complexity")),
-    excl0 = lo > 0 | hi < 0,                         # interval excludes zero
-    explained = recode(explained,
-      richness="Richness\ntotal", richness_sapling="Richness\nsaplings",
-      H="Shannon\nindex", cwm_shade="Shade tolerance",
-      abundance="Abundance", n_sapling="Abundance \nsapling", pad_tot="PAD\ntotal",
-      h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
-      empty_gf="Gap fraction", H_height="Vertical\ndistribution",
-      h_cv="Height\nvariability", pad_cv="PAD\nvariability",
-      ri="Rumple index",fhd="Foliage height \ndiversity"),
-    # explained = factor(explained, levels = rev(explained_order)),
-    explaining = recode(explaining,
-      rb_mean="Radiative\nbudget mean", rb_cv="Radiative\nbudget var.",
-      mean="Half-ext. \nheight", sd="Half-ext.\nheight (SD)",
-      mean_slope="Extinction\nspeed", sd_slope="Extinction\nspeed (SD)")
+    type_explained = factor(type_explained, levels = c("Composition","Quantity","Complexity")),
+    excl0 = lo > 0 | hi < 0                         # interval excludes zero
   ) %>% 
-  ggplot( aes(x = med, y = explained)) +
+  ggplot( aes(x = med, y = label_explained)) +
   geom_vline(xintercept = 0, linetype = 2, linewidth = .3, colour = "grey70") +
   geom_linerange(aes(xmin = lo, xmax = hi, colour = excl0), linewidth = .9) +
   geom_point(aes(colour = excl0), size = 1.3) +
@@ -394,7 +493,7 @@ boot_long %>%
     values = c(`TRUE` = "#1f5fa8", `FALSE` = "grey78")
   ) +
   guides(colour="none")+
-  facet_grid(type ~ explaining, scales = "free_y", space = "free_y") +
+  facet_grid(type_explained ~ label_explaining, scales = "free_y", space = "free_y") +
   labs(x = "Standardized coefficient", y = NULL) +
   theme_bw(base_size = 9) +
   theme(
@@ -404,6 +503,11 @@ boot_long %>%
     legend.position = "top"
   )
 
+# 
+#  anova(lm(richness~rb_sd+rb_mean,data=light_test))
+# anova(lm(richness~rb_cv+rb_mean,data=light_test))
+# summary(lm(richness~rb_mean,data=light_test))
+# summary(lm(richness~rb_cv,data=light_test))
 ```
 ## subplot
 

@@ -624,110 +624,415 @@ get_complexity <- function(pc_norm,
 }
 
 
-# get extinction characteristics
-#' @param plot_name plot name
-#' @param targets characteristic height to compute
-get_Hext<-function(rb_norm,
-                   pc_norm,
-                   subplot_extent,
-                   bbox,
-                   plot_name,
-                   targets=c(0.5,0.88)){
-  list_rb<-loadRData(rb_norm)         # load radiative budget
-  pc_norm<-loadRData(pc_norm)
-  
-  summary_height=data.frame(plot=character(),
-                            subplot=character(),
-                            time=numeric(),
-                            extinction=numeric(),
-                            mean=numeric(),
-                            sd=numeric(),
-                            mean_slope=numeric(),
-                            sd_slope=numeric())
-  
-  
-  for(t in seq_along(list_rb)){      # loop over simulation time
-    rb_norm=list_rb[[t]]
-    time=as.numeric(names(list_rb)[t])
-    
-    
-    prof <- reshape2::melt(rb_norm, 
-                           varnames = c("i", "j", "z"), 
-                           value.name = "value") %>%
-      group_by(i, j) %>%
-      mutate(extinction = 1 - value / max(value),
-             z   = z * 0.25)
-    
-    # z prédit pour chaque cible de ext, par courbe (i,j)
-    half <- prof %>%
-      group_modify(~{
-        m   <- mgcv::gam(z ~ s(extinction, k = 5), data = .x)
-        eps <- 1e-2
-        z_pred <- as.numeric(predict(m, newdata = tibble(extinction = targets)))
-        z_hi   <- as.numeric(predict(m, newdata = tibble(extinction = targets + eps)))
-        z_lo   <- as.numeric(predict(m, newdata = tibble(extinction = targets - eps)))
-        tibble(extinction = targets,
-               z_pred = z_pred,
-               slope  = (z_hi - z_lo) / (2 * eps))   # dz/d(extinction)
-      }) %>%
-      ungroup()
-    
-    summary_height <- summary_height %>%
-      bind_rows(half %>%
-                  group_by(extinction) %>%
-                  summarise(mean       = mean(z_pred),
-                            sd         = sd(z_pred),
-                            mean_slope = mean(slope),
-                            sd_slope   = sd(slope),
-                            .groups = "drop") %>%
-                  mutate(time = time, plot = plot_name,subplot="plot"))
-    
-    # get a raster 
-    wide <- half %>%
-      pivot_wider(id_cols = c(i, j),
-                  names_from  = extinction,
-                  values_from = c(z_pred, slope))
-    
-    stk <- terra::rast(wide, type = "xyz")
-    names(stk) 
-    
-    # prepare reference raster
-    pc_chm <- rasterize_canopy(pc_norm, res = 0.15, algorithm = p2r())
-    ext(stk)  <- ext(pc_chm)
-    crs(stk)  <- crs(pc_chm)
-    stk_matched <- resample(stk, pc_chm, method = "bilinear")
-    
-    for(sp in seq_along(subplot_extent)){
-      plot_ext=subplot_extent[[sp]]
-      plot_ext_trans <- shift(vect(plot_ext), 
-                              dx = -bbox$xmin, 
-                              dy = -bbox$ymin)
-      
-      stk_sub=crop(stk_matched,plot_ext_trans)
-      
-      
-      summary_height <- summary_height %>%
-        bind_rows(as.data.frame(stk_sub,xy=TRUE) %>% 
-                    pivot_longer(
-                      cols = -c(x, y),
-                      names_to  = c(".value", "extinction"),
-                      names_sep = "_(?=[0-9])"          # split at the underscore before the number
-                    ) %>% 
-                    group_by(extinction) %>%
-                    summarise(mean       = mean(z_pred),
-                              sd         = sd(z_pred),
-                              mean_slope = mean(slope),
-                              sd_slope   = sd(slope),
-                              .groups = "drop") %>%
-                    mutate(extinction=as.numeric(extinction),
-                           time = time,
-                           plot = plot_name,
-                           subplot=names(subplot_extent[sp])))
-      
-    }
-  }
-  return(summary_height)
+#' # get extinction characteristics
+#' #' @param plot_name plot name
+#' #' @param targets characteristic height to compute
+#' get_Hext<-function(rb_norm,
+#'                    pc_norm,
+#'                    subplot_extent,
+#'                    bbox,
+#'                    plot_name,
+#'                    targets=c(0.5,0.88)){
+#'   list_rb<-loadRData(rb_norm)         # load radiative budget
+#'   pc_norm<-loadRData(pc_norm)
+#'   
+#'   summary_height=data.frame(plot=character(),
+#'                             subplot=character(),
+#'                             time=numeric(),
+#'                             extinction=numeric(),
+#'                             mean=numeric(),
+#'                             sd=numeric(),
+#'                             mean_slope=numeric(),
+#'                             sd_slope=numeric())
+#'   
+#'   
+#'   for(t in seq_along(list_rb)){      # loop over simulation time
+#'     rb_norm=list_rb[[t]]
+#'     time=as.numeric(names(list_rb)[t])
+#'     
+#'     
+#'     prof <- reshape2::melt(rb_norm, 
+#'                            varnames = c("i", "j", "z"), 
+#'                            value.name = "value") %>%
+#'       group_by(i, j) %>%
+#'       mutate(extinction = 1 - value / max(value),
+#'              z   = z * 0.25)
+#'     
+#'     # z prédit pour chaque cible de ext, par courbe (i,j)
+#'     half <- prof %>%
+#'       group_modify(~{
+#'         m   <- mgcv::gam(z ~ s(extinction, k = 5), data = .x)
+#'         eps <- 1e-2
+#'         z_pred <- as.numeric(predict(m, newdata = tibble(extinction = targets)))
+#'         z_hi   <- as.numeric(predict(m, newdata = tibble(extinction = targets + eps)))
+#'         z_lo   <- as.numeric(predict(m, newdata = tibble(extinction = targets - eps)))
+#'         tibble(extinction = targets,
+#'                z_pred = z_pred,
+#'                slope  = (z_hi - z_lo) / (2 * eps))   # dz/d(extinction)
+#'       }) %>%
+#'       ungroup()
+#'     
+#'     summary_height <- summary_height %>%
+#'       bind_rows(half %>%
+#'                   group_by(extinction) %>%
+#'                   summarise(mean       = mean(z_pred),
+#'                             sd         = sd(z_pred),
+#'                             mean_slope = mean(slope),
+#'                             sd_slope   = sd(slope),
+#'                             .groups = "drop") %>%
+#'                   mutate(time = time, plot = plot_name,subplot="plot"))
+#'     
+#'     # get a raster 
+#'     wide <- half %>%
+#'       pivot_wider(id_cols = c(i, j),
+#'                   names_from  = extinction,
+#'                   values_from = c(z_pred, slope))
+#'     
+#'     stk <- terra::rast(wide, type = "xyz")
+#'     names(stk) 
+#'     
+#'     # prepare reference raster
+#'     pc_chm <- rasterize_canopy(pc_norm, res = 0.15, algorithm = p2r())
+#'     ext(stk)  <- ext(pc_chm)
+#'     crs(stk)  <- crs(pc_chm)
+#'     stk_matched <- resample(stk, pc_chm, method = "bilinear")
+#'     
+#'     for(sp in seq_along(subplot_extent)){
+#'       plot_ext=subplot_extent[[sp]]
+#'       plot_ext_trans <- shift(vect(plot_ext), 
+#'                               dx = -bbox$xmin, 
+#'                               dy = -bbox$ymin)
+#'       
+#'       stk_sub=crop(stk_matched,plot_ext_trans)
+#'       
+#'       
+#'       summary_height <- summary_height %>%
+#'         bind_rows(as.data.frame(stk_sub,xy=TRUE) %>% 
+#'                     pivot_longer(
+#'                       cols = -c(x, y),
+#'                       names_to  = c(".value", "extinction"),
+#'                       names_sep = "_(?=[0-9])"          # split at the underscore before the number
+#'                     ) %>% 
+#'                     group_by(extinction) %>%
+#'                     summarise(mean       = mean(z_pred),
+#'                               sd         = sd(z_pred),
+#'                               mean_slope = mean(slope),
+#'                               sd_slope   = sd(slope),
+#'                               .groups = "drop") %>%
+#'                     mutate(extinction=as.numeric(extinction),
+#'                            time = time,
+#'                            plot = plot_name,
+#'                            subplot=names(subplot_extent[sp])))
+#'       
+#'     }
+#'   }
+#'   return(summary_height)
+#' }
+
+
+## linear interpolation of a profile at arbitrary heights
+.interp <- function(z, v, zout) stats::approx(z, v, xout = zout, rule = 2)$y
+
+## height at which an extinction profile first reaches `target`, coming down
+## from the top of the canopy. `z` must increase with the index.
+.z_at_target <- function(z, e, target) {
+  k <- which(e >= target)
+  if (!length(k)&e[1]>=target) return(NA_real_)
+  if (!length(k)&e[1]<target) return(0)
+  k <- max(k)                                   # highest voxel still >= target
+  if (k == length(e)) return(z[k])              # target reached at the very top
+  z[k] + (target - e[k]) * (z[k + 1] - z[k]) / (e[k + 1] - e[k])
 }
+
+## all the metrics of ONE vertical profile (a column, or an aggregated unit)
+.profile_metrics <- function(z, e, rb, targets, z_ref, dz, smooth = FALSE) {
+  
+  ok <- is.finite(e)
+  if (sum(ok) < 5) return(NULL)
+  zo <- z[ok]; eo <- e[ok]
+  
+  f <- if (smooth) {
+    fit <- try(mgcv::gam(e ~ s(z, k = 5), data = data.frame(z = zo, e = eo)),
+               silent = TRUE)
+    if (inherits(fit, "try-error")) function(x) .interp(zo, eo, x)
+    else function(x) as.numeric(predict(fit, newdata = data.frame(z = x)))
+  } else {
+    function(x) .interp(zo, eo, x)
+  }
+  
+  ## central finite difference -> d(extinction)/dz, in m-1 (negative)
+  slope <- function(z0) {
+    if(z0!=0) {
+      (f(z0 + dz) - f(z0 - dz)) / (2 * dz)
+      } else (f(2*dz) - f(dz)) / dz
+  } 
+  
+  zc <- vapply(targets, function(tg) .z_at_target(zo, eo, tg), numeric(1))
+  
+  tibble(
+    target      = targets,
+    z_cross     = zc,
+    slope_cross = vapply(zc, function(x) if (is.na(x)) NA_real_ else slope(x),
+                         numeric(1)),
+    ext_ref     = .interp(zo, eo, z_ref),       # raw value, never smoothed
+    slope_ref   = slope(z_ref),
+    rb_ref      = .interp(z, rb, z_ref)
+  )
+}
+
+## PAD metrics of ONE vertical PAI profile
+.pad_metrics <- function(z_top, pai, z_ref, voxel_size) {
+  pai <- ifelse(is.na(pai), 0, pai)
+  tot <- sum(pai)
+  w   <- pmin(pmax((z_top - z_ref) / voxel_size, 0), 1)   # fraction above z_ref
+  z50 <- NA_real_
+  if (tot > 0) {
+    cs   <- cumsum(pai)
+    k    <- which(cs >= 0.5 * tot)[1]
+    prev <- if (k == 1L) 0 else cs[k - 1L]
+    z50  <- (z_top[k] - voxel_size) + (0.5 * tot - prev) / pai[k] * voxel_size
+  }
+  c(padAbove = sum(pai * w), padTot = tot, zPAD50 = z50)
+}
+
+## sum an [i, j, k] array over a set of columns -> one 1-D profile
+.profile_sum <- function(arr, ij) {
+  m <- cbind(ij$i, ij$j)
+  vapply(seq_len(dim(arr)[3]),
+         function(k) sum(arr[cbind(m, k)], na.rm = TRUE), numeric(1))
+}
+
+## mean / sd of a set of columns, for every unit
+.summarise_columns <- function(d, vars, groups) {
+  d %>%
+    group_by(across(all_of(groups))) %>%
+    summarise(across(all_of(vars),
+                     list(mean = ~mean(.x, na.rm = TRUE),
+                          sd   = ~sd(.x,   na.rm = TRUE)),
+                     .names = "{.col}_{.fn}"),
+              n_col = n(), .groups = "drop") %>%
+    .add_cv()
+}
+
+.add_cv <- function(d) {
+  vars <- sub("_mean$", "", grep("_mean$", names(d), value = TRUE))
+  for (v in vars) d[[paste0(v, "_cv")]] <- d[[paste0(v, "_sd")]] / d[[paste0(v, "_mean")]]
+  d
+}
+
+## turn an (i, j, ...) table back into a georeferenced raster stack
+.ij_rast <- function(d, tmpl) {
+  ni <- nrow(tmpl); nj <- ncol(tmpl)
+  vars <- setdiff(names(d), c("i", "j"))
+  out <- lapply(vars, function(v) {
+    m <- matrix(NA_real_, ni, nj)
+    m[cbind(d$i, d$j)] <- d[[v]]
+    terra::setValues(tmpl, as.vector(t(m[ni:1, , drop = FALSE])))  # row 1 = north
+  })
+  out <- terra::rast(out)
+  names(out) <- vars
+  out
+}
+
+
+#' Extinction and PAD characteristics of a plot and its subplots
+#'
+#' @param rb_norm path to the voxelised, height-normalised radiative budget
+#'   (a named list of (i, j, z) arrays, names = simulation time)
+#' @param pc_norm path to the height-normalised point cloud (used only for the
+#'   extent / crs of the voxel grid)
+#' @param voxnorm path to the voxelised, height-normalised PAD array (i, j, z),
+#'   same horizontal grid as rb_norm
+#' @param subplot_extent named list of subplot polygons (sf / SpatVector), in
+#'   the original coordinate system
+#' @param bbox bounding box used to normalise the point cloud (list with
+#'   $xmin, $ymin)
+#' @param plot_name plot name
+#' @param targets characteristic extinction levels at which the height of the
+#'   profile is computed
+#' @param z_ref reference height (m) at which extinction, its vertical slope and
+#'   the PAD above are evaluated
+#' @param voxel_size vertical voxel size (m); also the finite-difference step
+#' @param pad_unit "density" if voxnorm stores PAD in m2/m3 (values are
+#'   multiplied by voxel_size to get a plant area index), "index" if each voxel
+#'   already holds m2/m2
+#' @param smooth_columns fit a gam(extinction ~ s(z, k = 5)) before taking the
+#'   per-column slopes (your original behaviour). Costs one gam per column and
+#'   per time step; set to FALSE for raw finite differences.
+#' @param touches passed to terra::extract(): TRUE also keeps the cells merely
+#'   touched by a subplot polygon, FALSE (default) keeps only those whose
+#'   centre falls inside
+#' @param return_rasters also return the per-column metrics as raster stacks
+#'
+#' @return a tibble with one row per (subplot, time, target), or a list if
+#'   return_rasters = TRUE
+get_Hext <- function(rb_norm,
+                     pc_norm,
+                     voxnorm,
+                     subplot_extent,
+                     bbox,
+                     plot_name,
+                     targets        = c(0.5, 0.9),
+                     z_ref          = 4.5,
+                     voxel_size     = 0.25,
+                     pad_unit       = c("density", "index"),
+                     smooth_columns = TRUE,
+                     touches        = FALSE,
+                     return_rasters = FALSE) {
+  
+  list_rb <- loadRData(rb_norm)
+  pc      <- loadRData(pc_norm)
+  voxpad  <- loadRData(voxnorm)
+  
+  if (!identical(dim(voxpad)[1:2], dim(list_rb[[1]])[1:2])){
+    if(abs(dim(voxpad)[1]-dim(list_rb[[1]])[1])<=2 &
+       abs(dim(voxpad)[2]-dim(list_rb[[1]])[2])<=2){
+      dim_x=min(dim(voxpad)[1],dim(list_rb[[1]])[1])
+      dim_y=min(dim(voxpad)[2],dim(list_rb[[1]])[2])
+      voxpad=voxpad[1:dim_x,1:dim_y,]
+      for(l in seq_along(list_rb)){
+        list_rb[[l]]=list_rb[[l]][1:dim_x,1:dim_y,]
+        }
+    }else{
+      stop("voxpad and rb_norm do not share the same horizontal grid")
+    }
+    }  
+  ni <- dim(voxpad)[1]
+  nj <- dim(voxpad)[2]
+  nz <- dim(voxpad)[3]
+  
+  # -------------------------------------------------------------------
+  # 1. geolocate the voxel grid and find which columns belong to which unit
+  #    (i indexes rows south -> north, j indexes columns west -> east:
+  #     this is the orientation implied by your rast(wide, type = "xyz"))
+  # -------------------------------------------------------------------
+  chm  <- lidR::rasterize_canopy(pc, res = 0.15, algorithm = lidR::p2r())
+  tmpl <- terra::rast(nrows = ni, ncols = nj,
+                      extent = terra::ext(chm), crs = terra::crs(chm))
+  
+  r_ij <- c(terra::setValues(tmpl, rep(ni:1,        each  = nj)),   # i
+            terra::setValues(tmpl, rep(seq_len(nj), times = ni)))   # j
+  names(r_ij) <- c("i", "j")
+  
+  sub_lut <- purrr::imap_dfr(subplot_extent, function(e, nm) {
+    if (inherits(e, "bbox")) e <- sf::st_as_sfc(e)
+    p <- terra::shift(terra::vect(e), dx = -bbox$xmin, dy = -bbox$ymin)
+    v <- terra::extract(r_ij, p, touches = touches)
+    if (!nrow(v)) warning("no voxel column falls inside subplot ", nm)
+    tibble(subplot = nm, i = v$i, j = v$j)
+  }) %>% filter(!is.na(i), !is.na(j))
+  
+  ## the plot itself = every column, handled exactly like a subplot
+  sub_lut <- bind_rows(
+    expand_grid(subplot = "plot", i = seq_len(ni), j = seq_len(nj)),
+    sub_lut
+  )
+  
+  # -------------------------------------------------------------------
+  # 2. PAD metrics (time invariant)
+  # -------------------------------------------------------------------
+  pai   <- voxpad * if (pad_unit == "density") voxel_size else 1
+  z_pad <- seq_len(nz) * voxel_size                       # top of each voxel
+  
+  pad_arr <- apply(pai, 1:2, .pad_metrics,
+                   z_top = z_pad, z_ref = z_ref, voxel_size = voxel_size)
+  
+  pad_col <- tibble(i        = rep(seq_len(ni), times = nj),
+                    j        = rep(seq_len(nj), each  = ni),
+                    padAbove = as.vector(pad_arr["padAbove", , ]),
+                    padTot   = as.vector(pad_arr["padTot",   , ]),
+                    zPAD50   = as.vector(pad_arr["zPAD50",   , ]))
+  
+  ## distribution of the per-column values, per unit
+  pad_sum <- sub_lut %>%
+    left_join(pad_col, by = c("i", "j")) %>%
+    .summarise_columns(vars   = c("padAbove", "padTot", "zPAD50"),
+                       groups = "subplot")
+  
+  ## same metrics on the aggregated profile of each unit
+  pad_agg <- sub_lut %>%
+    group_by(subplot) %>%
+    group_modify(~ tibble::as_tibble_row(
+      .pad_metrics(z_pad, .profile_sum(pai, .x), z_ref, voxel_size))) %>%
+    ungroup() %>%
+    rename_with(~paste0(.x, "_agg"), c(padAbove, padTot, zPAD50))
+  
+  # -------------------------------------------------------------------
+  # 3. light metrics, one pass per simulation time
+  # -------------------------------------------------------------------
+  grid  <- expand_grid(i = seq_len(ni), j = seq_len(nj))
+  l_ras <- list()
+  
+  light <- imap_dfr(list_rb, function(rb, nm) {
+    
+    time   <- as.numeric(nm)
+    nz_rb  <- dim(rb)[3]
+    z_rb   <- seq_len(nz_rb) * voxel_size
+    rb_max <- max(rb, na.rm = TRUE)          # brightest voxel of the scene
+    
+    ## --- per column -------------------------------------------------
+    col_met <- map2_dfr(grid$i, grid$j, function(ii, jj) {
+      rb_prof <- rb[ii, jj, ]
+      if (all(!is.finite(rb_prof))) return(NULL)
+      m <- .profile_metrics(z = z_rb, e = 1 - rb_prof / rb_max, rb = rb_prof,
+                            targets = targets, z_ref = z_ref, dz = voxel_size,
+                            smooth = smooth_columns)
+      if (is.null(m)) return(NULL)
+      mutate(m, i = ii, j = jj, .before = 1)
+    })
+    
+    if (return_rasters)
+      l_ras[[nm]] <<- .ij_rast(
+        col_met %>%
+          pivot_wider(id_cols     = c(i, j),
+                      names_from  = target,
+                      values_from = c(z_cross, slope_cross)) %>%
+          left_join(distinct(col_met, i, j, ext_ref, slope_ref, rb_ref),
+                    by = c("i", "j")),
+        tmpl)
+    
+    col_sum <- sub_lut %>%
+      left_join(col_met, by = c("i", "j"), relationship = "many-to-many") %>%
+      filter(!is.na(target)) %>%
+      .summarise_columns(vars   = c("z_cross", "slope_cross",
+                                    "ext_ref", "slope_ref", "rb_ref"),
+                         groups = c("subplot", "target"))
+    
+    ## --- aggregated profile of each unit ----------------------------
+    agg <- sub_lut %>%
+      group_by(subplot) %>%
+      group_modify(~{
+        rb_prof <- .profile_sum(rb, .x)
+        .profile_metrics(z = z_rb, e = 1 - rb_prof / max(rb_prof, na.rm = TRUE),
+                         rb = rb_prof, targets = targets, z_ref = z_ref,
+                         dz = voxel_size, smooth = FALSE)
+      }) %>%
+      ungroup() %>%
+      rename_with(~paste0(.x, "_agg"),
+                  c(z_cross, slope_cross, ext_ref, slope_ref, rb_ref))
+    
+    col_sum %>%
+      left_join(agg, by = c("subplot", "target")) %>%
+      mutate(time = time, .before = 1)
+  })
+  
+  # -------------------------------------------------------------------
+  # 4. assemble
+  # -------------------------------------------------------------------
+  out <- light %>%
+    left_join(pad_sum %>% select(-n_col), by = "subplot") %>%
+    left_join(pad_agg,                    by = "subplot") %>%
+    mutate(plot = plot_name, .before = 1) %>%
+    arrange(subplot, time, target)
+  
+  if (!return_rasters) return(out)
+  
+  list(summary     = out)#,
+  # pad_rast    = .ij_rast(pad_col, tmpl),
+  # light_rast  = l_ras,
+  # subplot_lut = sub_lut)
+}
+
 
 
 ### REGENERATION METRICS ####
