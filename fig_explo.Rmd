@@ -246,18 +246,19 @@ Huge variability though at the subplot scale. For GER11 two peaks corresponding 
 ## Between heterogeneity of light and abundance/richness/H/brwosing
 
 ```{r}
-reg_ext=regen_metrics_subplot %>% 
-  select(plot,subplot,richness,abundance,H,browsing) %>% unique() %>% 
-  pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val")
+reg_ext=regen_metrics_plot %>% 
+  select(plot,richness,abundance,H,browsing) %>% unique() %>% 
+  pivot_longer(cols=-c(plot),names_to = "y",values_to = "y_val")
 
 
 reg_ext %>% 
   left_join(metric3d_all %>% 
-              select(plot,subplot,slice_num,time,rb_sd) %>% 
+              select(plot,subplot,slice_num,time,rb_mean) %>% 
               filter(slice_num==1) %>% filter(time==12) %>% 
-              filter(subplot!="plot"),by=c("plot","subplot")) %>% 
-  ggplot(aes(rb_sd,y_val,col=plot))+
+              filter(subplot=="plot"),by=c("plot")) %>% 
+  ggplot(aes(rb_mean,y_val,col=plot))+
   geom_point()+geom_smooth(aes(color=NULL),method="lm")+
+  scale_x_log10()+
   facet_wrap(~y,scale="free_y",ncol=4)
 ```
 
