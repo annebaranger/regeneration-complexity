@@ -4,71 +4,68 @@ library(tidyr)
 tar_load(regen_metrics)
 tar_load(metric3d_all)
 
-metric3d_all_plot=metric3d_all %>% 
-  filter(subplot=="plot") %>% 
-  pivot_longer(cols =  c(matches("h_"),"coef_lin")) 
+# metric3d_all_plot=metric3d_all %>% 
+#   filter(subplot=="plot") %>% 
+#   pivot_longer(cols =  c(matches("h_"),"coef_lin")) 
+# 
+# metric3d_all %>% 
+#   filter(subplot!="plot") %>% 
+#   pivot_longer(cols = c(matches("h_"),"coef_lin")) %>% 
+#   ggplot(aes(slice_num,value,color=plot))+
+#   geom_line(aes(group=interaction(plot,subplot)),alpha = 0.4)+
+#   geom_point(data=metric3d_all_plot,aes(slice_num,value,color=plot))+
+#   geom_line(data=metric3d_all_plot,aes(slice_num,value,color=plot,group=interaction(plot,subplot)))+
+#   facet_grid(name~plot,scale="free_y")+
+#   theme_bw()
 
-metric3d_all %>% 
-  filter(subplot!="plot") %>% 
-  pivot_longer(cols = c(matches("h_"),"coef_lin")) %>% 
-  ggplot(aes(slice_num,value,color=plot))+
-  geom_line(aes(group=interaction(plot,subplot)),alpha = 0.4)+
-  geom_point(data=metric3d_all_plot,aes(slice_num,value,color=plot))+
-  geom_line(data=metric3d_all_plot,aes(slice_num,value,color=plot,group=interaction(plot,subplot)))+
-  facet_grid(name~plot,scale="free_y")+
-  theme_bw()
+# 
+# reg_ext=regen_metrics_subplot %>% 
+#   select(plot,subplot,richness,abundance,H,browsing) %>% 
+#   pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val")
+# 
+# 
+# metric3d_all %>% 
+#   select(plot,subplot,slice_num,rb_sd) %>% filter(slice_num==1) %>% 
+#   filter(subplot!="plot") %>%
+#   left_join(reg_ext,by=c("plot","subplot")) %>% 
+#   distinct() %>%  
+#   ggplot(aes(rb_sd,y_val,col=plot))+
+#   geom_point()+geom_smooth(aes(group=plot))+
+#   facet_wrap(~y,scale="free_y",ncol=4)
 
-
-reg_ext=regen_metrics %>% 
-  select(Plot,Subplot,richness,abundance,H,browsing) %>% 
-  rename(plot=Plot,
-         subplot=Subplot) %>% 
-  mutate(subplot=paste0("subplot_",subplot)) %>% 
-  pivot_longer(cols=-c(plot,subplot),names_to = "y",values_to = "y_val")
-
-
-metric3d_all %>% 
-  select(plot,subplot,slice_num,rb_sd) %>% filter(slice_num==1) %>% 
-  filter(subplot!="plot") %>%
-  left_join(reg_ext,by=c("plot","subplot")) %>% 
-  distinct() %>%  
-  ggplot(aes(rb_sd,y_val,col=plot))+
-  geom_point()+geom_smooth(aes(group=plot))+
-  facet_wrap(~y,scale="free_y",ncol=4)
-
-
-regen_metrics %>% 
-  rename(plot=Plot,
-         subplot=Subplot) %>% 
-  ggplot(aes(browsing,abundance,color=plot))+
-  geom_point()
-
-
-# variable n_seedling is useless, because seedling are the most abundant class
-regen_metrics %>% 
-  ggplot(aes(abundance,n_seedling))+
-  geom_point()
-
-regen_metrics_plot=regen_metrics %>% 
-  select(-Species) %>% 
-  group_by(Plot,Subplot) %>% 
-  summarise(across(everything(), \(x) mean(x, na.rm = TRUE)),
-            .groups = "drop")  
+# 
+# regen_metrics %>% 
+#   rename(plot=Plot,
+#          subplot=Subplot) %>% 
+#   ggplot(aes(browsing,abundance,color=plot))+
+#   geom_point()
+# 
+# 
+# # variable n_seedling is useless, because seedling are the most abundant class
+# regen_metrics %>% 
+#   ggplot(aes(abundance,n_seedling))+
+#   geom_point()
+# 
+# regen_metrics_plot=regen_metrics %>% 
+#   select(-Species) %>% 
+#   group_by(Plot,Subplot) %>% 
+#   summarise(across(everything(), \(x) mean(x, na.rm = TRUE)),
+#             .groups = "drop")  
 
 
 # effect of browsing on structural variables
-regen_metrics_plot %>% 
-  pivot_longer(cols=-c("Plot","Subplot","browsing")) %>% 
-  mutate(name=factor(name,levels = c("abundance","abundance_cv","n_seedling","richness","richness_sd",
-                                     "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
-                                     "Height_increment_cv_hclass2","Height_increment_cv_hclass3",
-                                     "H",
-                                     "H_hclass1","H_hclass2","H_hclass3","H_hclass4","H_hclass5"))) %>% 
-  ggplot(aes(browsing,value))+
-  geom_point()+
-  geom_smooth(method="gam")+
-  facet_wrap(~name,scale="free_y",ncol=5)+
-  theme_bw()
+# regen_metrics_plot %>% 
+#   pivot_longer(cols=-c("Plot","Subplot","browsing")) %>% 
+#   mutate(name=factor(name,levels = c("abundance","abundance_cv","n_seedling","richness","richness_sd",
+#                                      "Height_increment_mn_hclass2","Height_increment_mn_hclass3",
+#                                      "Height_increment_cv_hclass2","Height_increment_cv_hclass3",
+#                                      "H",
+#                                      "H_hclass1","H_hclass2","H_hclass3","H_hclass4","H_hclass5"))) %>% 
+#   ggplot(aes(browsing,value))+
+#   geom_point()+
+#   geom_smooth(method="gam")+
+#   facet_wrap(~name,scale="free_y",ncol=5)+
+#   theme_bw()
 
 # analysis per species
 browsing_sp=tar_read(regen_df) %>%

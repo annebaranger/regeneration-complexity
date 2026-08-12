@@ -2,20 +2,20 @@ library(targets)
 library(tarchetypes)
 library(crew)
 tar_source(files = "R")
-tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr",
-                            "ncdf4", "terra","sf",
+tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
+                            "ncdf4", "terra","sf","purrr","tibble","mgcv",
                             "lidR","ITSMe"),
                controller = crew_controller_local(workers = 6),
                error = "null")
 # lapply(c("targets",
-#          "dplyr", "ggplot2","data.table","tidyr",
+#          "dplyr", "ggplot2","data.table","tidyr","readxl",
 #          "ncdf4", "terra","sf",
 #          "lidR","ITSMe"),require,character.only=TRUE)
 
 plot_values <- tibble::tibble(
   plot_name = c("GER02", "GER01","GER06","GER09","GER11","GER12","GER13","GER14",
                 "GER18","GER19","GER20","GER21","GER27","GER29","GER34","GER35",
-                "GER37","GER38")   # <-- add all your plots here
+                "GER37","GER38","GER32")   # <-- add all your plots here
 )
 # Mapped targets (run once per plot) ────────────────────────────────────────
 mapped<-tar_map(
@@ -47,6 +47,12 @@ mapped<-tar_map(
                             dtm),
                format = "file"),
     
+    tar_target(voxnorm,
+               get_pad(user,
+                       path_plot,
+                       plot_name),
+               format = "file"),
+    
     tar_target(pc_norm,
                get_pc_norm_clean(plot_name = plot_name,
                                  user,
@@ -58,13 +64,61 @@ mapped<-tar_map(
                                   user)),
     
     tar_target(metric3d_df,
-               get_complexity_rb(pc_norm,
-                                 rb_norm,
-                                 bbox,
-                                 subplot_extent,
-                                 plot_name = plot_name,
-                                 nstrat    = 4))
-  )
+               get_complexity(pc_norm,
+                              rb_norm,
+                              voxnorm,
+                              bbox,
+                              subplot_extent,
+                              plot_name = plot_name,
+                              sliced=TRUE,
+                              nstrat    = 4)),
+    tar_target(metric3d_df_unsliced,
+               get_complexity(pc_norm,
+                              rb_norm,
+                              voxnorm,
+                              bbox,
+                              subplot_extent,
+                              plot_name = plot_name,
+                              sliced=FALSE,
+                              slice_low=0,
+                              slice_up=4)),
+    tar_target(H_ext,
+               get_Hext(rb_norm,
+                        pc_norm,
+                        voxnorm,
+                        subplot_extent,
+                        bbox,
+                        plot_name,
+                        targets        = c(0.5, 0.9),
+                        z_ref          = 4.5,
+                        voxel_size     = 0.25,
+                        pad_unit       = c("density"),
+                        smooth_columns = TRUE,
+                        touches        = FALSE,
+                        return_rasters = FALSE)),
+    tar_target(file_segmented,
+               file.segmented(path_plot,
+                              plot_name,
+                              folders=c("regen","hesitation"))),
+    tar_target(pc_norm_seg,
+               get_pc_norm_regen(path_plot,
+                                 plot_name,
+                                 file_segmented,
+                                 dtm,
+                                 bbox)),
+    tar_target(
+      metric3d_df_reg, {
+        targets::tar_cancel(is.null(pc_norm_seg))
+        get_below_canopy_complexity(
+          pc_norm_seg, rb_norm, voxnorm, bbox,
+          subplot_extent, plot_name,
+          voxel_size = 0.25, chm_res = 0.1
+        )
+      }
+    )
+    )
+
+
 list(
   # Static targets (run once) ─────────────────────────────────────────────────
   tar_target(user, "Anne"),
@@ -79,7 +133,22 @@ list(
     mapped[["metric3d_df"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
   ),
-  # Analyse regeneration survey ───────────────────────────────── 
+  tar_combine(
+    metric3d_all_unsliced,
+    mapped[["metric3d_df_unsliced"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  tar_combine(
+    metric3d_all_seg,
+    mapped[["metric3d_df_reg"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  tar_combine(
+    H_ext_all,
+    mapped[["H_ext"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  # Analyse regeneration survey ─────────────────────────────────────────────── 
   tar_target(regen_path,
              "//ifs-prod-596-cifs.ifs.uis.private.cam.ac.uk/geog-forest/germany-2025/germany-regen/Regen_Fundiv_Germany_0825.xlsx",
              format="file"),
@@ -90,7 +159,126 @@ list(
                       subplot=Subplot) %>% 
                mutate(subplot=paste0("subplot_",subplot))),
   tar_target(regen_metrics_subplot,
-             get_regen_metric_subplot(regen_df)),
+             get_regen_metric_subplot(regen_df,shade_df)),
   tar_target(regen_metrics_plot,
-             get_regen_metric_plot(regen_df))
-)
+             get_regen_metric_plot(regen_df,shade_df)),
+  tar_target(regen_cat,
+             readxl::read_excel(regen_path,sheet=2) %>%
+               dplyr::mutate(dplyr::across(c(2,4:12), as.numeric)) %>% 
+               rename(plot=Plot,
+                      subplot=Subplot) %>% 
+               mutate(subplot=paste0("subplot_",subplot)) %>% 
+               select(-c(14,13)) %>% 
+               filter(!is.na(Regeneration)) %>% 
+               group_by(plot) %>% 
+               summarize(mean_reg=mean(Regeneration),
+                         .groups = "drop"
+               ) %>% 
+               dplyr::mutate(
+                 reg_category = dplyr::ntile(mean_reg, 3),
+                 reg_category = factor(
+                   reg_category,
+                   levels = 1:3,
+                   labels = c("Low", "Medium", "High")
+                 )
+               )
+  ),
+  tar_target(regen_cat_subplot,
+             readxl::read_excel(regen_path,sheet=2) %>%
+               dplyr::mutate(dplyr::across(c(2,4:12), as.numeric)) %>% 
+               rename(plot=Plot,
+                      subplot=Subplot) %>% 
+               mutate(subplot=paste0("subplot_",subplot)) %>% 
+               select(-c(14,13)) %>% 
+               filter(!is.na(Regeneration)) %>% 
+               dplyr::mutate(
+                 reg_category = dplyr::ntile(Regeneration, 3),
+                 reg_category = factor(
+                   reg_category,
+                   levels = 1:3,
+                   labels = c("Low", "Medium", "High")
+                 )
+               )
+  ),
+  
+  # Get inventory data ─────────────────────────────────────────────────────────
+  tar_target(inventory_path,
+             "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/germany-2025/regeneration-germany/Plot_descriptors_tree_data_Year2017_Inventory2_Germany.xls",
+             format="file"
+  ),
+  tar_target(inventory_df,
+             readxl::read_excel(inventory_path,sheet = "Raw data") %>% 
+               filter(PlotID %in% plot_values$plot_name) %>% 
+               rename(plot=PlotID) %>% 
+               dplyr::mutate(dplyr::across(c(2,3,6:15), as.numeric))
+               
+  ),
+  tar_target(plot_df,
+             get_adults(inventory_df)),
+  
+  
+  # get shade tolerance ─────────────────────────────────────────────────────────
+  tar_target(
+    shade_df,
+    read.csv("shadetolerance.csv") %>% 
+      separate(Species,into=c("Genus","species")) %>% 
+      filter(Data.set.1=="Europe") %>% 
+      mutate(species=paste0(toupper(substr(Genus,1,2)),toupper(substr(species,1,2)))) %>% 
+      filter(species %in% regen_df$Species) %>% 
+      select(species,shade_tolerance=Shade.tolerance) %>% 
+      bind_rows(data.frame(species="CRSP",shade_tolerance=1.93))
+  ),
+  
+  # meta data for plotting ─────────────────────────────────────────────────────
+  tar_target(
+    var_meta,
+    tribble(
+      ~variable,             ~type,          ~label,
+      "richness",            "Composition",  "Richness \ntotal",
+      "richness_sapling",    "Composition",  "Richness \nsaplings",
+      "H",                   "Composition",  "Shannon \nindex",
+      "cwm_shade",           "Composition",  "Shade tolerance",
+      "abundance",           "Quantity",     "Abundance",
+      "abundance_cv",        "Quantity",     "Abundance CV",
+      "n_sapling",           "Quantity",     "Abundance of \nsaplings",
+      "h_mean",              "Quantity",     "Mean \nheight",
+      "pad_tot",             "Quantity",     "PAD \ntotal",
+      "empty_gf",            "Quantity",     "Gap fraction",
+      "Height_increment_mn", "Quantity",     "Height \nincrement",
+      "H_height",            "Complexity",   "Vertical \ndistribution",
+      "h_cv",                "Complexity",   "Height \nvariability",
+      "pad_cv",              "Complexity",   "PAD \nvariability",
+      "ri",                  "Complexity",   "Rumple index",
+      "fhd",                 "Complexity",   "Foliage height \ndiversity",
+      "browsing",            "Other",        "Browsing",
+      "rb_mean",             "Light",        "Radiative\nbudget mean",
+      "rb_cv",               "Light",        "Radiative\nbudget CV",
+      "rb_sd",               "Light",        "Radiative\nbudget SD",
+      "ext_ref_agg",         "Light",        "Mean extinction \n at 4.5m",
+      "ext_ref_cv",          "Light",        "Mean extinction \n at 4.5m CV",
+      "ext_ref_sd",          "Light",        "Mean extinction \n at 4.5m SD",
+      "padAbove_agg",        "PAD",          "PAD above \nregeneration",
+      "padAbove_cv",         "PAD",          "PAD above \nCV",
+      "padAbove_sd",         "PAD",          "PAD above \nSD",
+      "padTot_agg",          "PAD",          "PAD total",
+      "padTot_cv",           "PAD",          "PAD total CV",
+      "padTot_sd",           "PAD",          "PAD total sd",
+      "rb_ref_agg",          "Light",        "RB. at 4.5m",
+      "rb_ref_cv",           "Light",        "RB. at 4.5m \nCV",
+      "rb_ref_sd",           "Light",        "RB. at 4.5m \nSD",
+      "slope_cross_agg",     "Light",        "Light profile slope \nat ext = ",
+      "slope_cross_cv",      "Light",        "Light profile slope, CV \nat ext = ",
+      "slope_cross_sd",      "Light",        "Light profile slope, SD \nat ext = ",
+      "slope_ref_agg",       "Light",        "Light profile slope \nat 4.5m",
+      "slope_ref_cv",        "Light",        "Light profile slope, CV\nat 4.5m",
+      "slope_ref_sd",        "Light",        "Light profile slope, SD\nat 4.5m",
+      "z_cross_agg",         "Light",        "Height\nat ext = ",
+      "z_cross_cv",          "Light",        "Height, CV\nat ext = ",
+      "z_cross_sd",          "Light",        "Height, SD\nat ext = ",
+      "zPAD50_agg",          "PAD",          "Height at\n 50% of max(PAD)",
+      "zPAD50_cv",           "PAD",          "Height (CV) at\n 50% of max(PAD)",
+      "zPAD50_sd",           "PAD",          "Height (SD) at\n 50% of max(PAD)"
+    )    
+  )
+  )
+

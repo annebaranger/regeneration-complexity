@@ -1,0 +1,1232 @@
+---
+title: "Fig_paper"
+author: "Anne Baranger"
+date: "2026-06-24"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE,message=FALSE)
+library(targets)
+lapply(c("stringr","tidyr","dplyr","tibble","tidyverse", # data analysis
+         "ggplot2","viridis", "ggridges","wesanderson","ggridges","ggrepel","ggnewscale","ggside", # plot
+         "factoextra", "nlme","modi","rstan","shinystan","boot", "rstatix","lme4",# stat & models
+         "rworldmap" # geographic data #terre, sf
+         ),require,character.only=TRUE)
+theme_set(theme_bw()) # ggplot theme
+common_theme <- theme(
+  # legend.position = "none",
+  strip.background = element_rect(fill = "white",
+                                        colour = "gray12"),
+  panel.background = element_rect(fill = "white",
+                                  colour = "gray12",
+                                  size = 0.5, linetype = "solid"),
+  plot.title = element_text(size = 12),
+  axis.title = element_text(size = 10),
+  axis.text = element_text(size = 10),
+  strip.text = element_text(size =10),
+  plot.margin = unit(c(0, 0.2, 0, 0.2), "cm")  # Example margin; adjust as needed
+)
+
+loadRData <- function(fileName){
+  #loads an RData file, and returns it
+  load(fileName)
+  get(ls()[ls() != "fileName"])
+}
+
+```
+
+# Data preparation 
+
+```{r}
+tar_load(metric3d_all)
+tar_load(metric3d_all_unsliced)
+tar_load(metric3d_all_seg)
+tar_load(regen_metrics_plot)
+tar_load(regen_metrics_subplot)
+tar_load(plot_df)
+tar_load(H_ext_all)
+tar_load(regen_cat)
+tar_load(regen_cat_subplot)
+```
+
+# Regeneration structure pattern
+
+
+```{r, fig.width=10, fig.height=6}
+prep_pca_data <- function(regen, id_cols, plot_level) {
+  regen %>%
+    mutate(across(c(richness_sapling, n_sapling), ~ replace_na(.x, 0))) %>%
+    select(all_of(id_cols),
+           richness, H, richness_sapling, cwm_shade,   # composition
+           abundance, n_sapling,                       # quantity
+           Height_increment_mn,abundance_cv,                        # dynamics 
+           H_height, browsing) %>%                     # complexity
+    inner_join(
+      metric3d_all_unsliced %>%
+        filter(if (plot_level) subplot == "plot" else subplot != "plot",time == 12) %>% #,
+               # , slice_num == 1) %>%
+        select(all_of(id_cols), empty_gf, pad_tot, pad_cv, ri,fhd), #h_mean, h_cv,
+      by = id_cols
+    )
+}
+
+
+
+
+pca_data_plot    <- prep_pca_data(regen_metrics_plot$all,    "plot",              TRUE)
+pca_data_subplot <- prep_pca_data(regen_metrics_subplot$all, c("plot","subplot"), FALSE)
+
+
+pca_df   <- pca_data_plot %>% select(-plot) %>% mutate(across(everything(), as.numeric)) %>% drop_na()
+pca_res  <- prcomp(pca_df, center = TRUE, scale. = TRUE)
+
+pca_tot <- bind_rows(pca_data_plot, pca_data_subplot) %>%
+  left_join(regen_cat) %>%
+  bind_cols(as_tibble(predict(pca_res, .[, colnames(pca_df)])[, 1:2]))
+
+
+v <- get_pca_var(pca_res)
+var_coord <- tibble(
+  variable = rownames(v$coord),
+  PC1      = v$coord[, 1],
+  PC2      = v$coord[, 2],
+  contrib  = rowSums(v$contrib[, 1:2]),
+  cos2     = rowSums(v$cos2[, 1:2])
+) %>%
+  left_join(var_meta, by = "variable") %>%
+  mutate(type = replace_na(type, "Other"))
+
+pts <- pca_tot %>%
+  filter(is.na(subplot)) %>%
+  mutate(plot_level = "Plot")
+
+ggplot() +
+  geom_point(
+    data = pts,
+    aes(PC1, PC2, shape = plot_level, size = plot_level, color = reg_category)
+  ) +
+  geom_xsideboxplot(
+    data = pts %>% filter(!is.na(reg_category)),
+    aes(x = PC1, y = reg_category, fill = reg_category),
+    orientation = "y", outliers = FALSE
+  ) +
+  geom_ysideboxplot(
+    data = pts %>% filter(!is.na(reg_category)),
+    aes(y = PC2, x = reg_category, fill = reg_category),
+    orientation = "x", outliers = FALSE
+  )+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  scale_shape_manual(name = "Spatial scale", values = c("Plot" = 19, "Subplot" = 1)) +
+  scale_size_manual(name = "Spatial scale", values = c("Plot" = 2.5, "Subplot" = 1.5)) +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  guides(color="none",size="none",shape="none")+
+  new_scale_color() +
+  geom_segment(
+    data = var_coord,
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5, color = type),
+    arrow = arrow(length = unit(0.20, "cm")), lineend = "round"
+  ) +
+  geom_text_repel(
+    data = var_coord,
+    aes(x = PC1*5, y = PC2*5, label = label, color = type),
+    size = 3, show.legend = FALSE
+  ) +
+  scale_color_brewer(name = "Variable type", palette = "Dark2") +
+  theme_minimal() +
+  # shrink the side panels + hide their axes
+  theme(
+    # --- main panel: black frame ---
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
+    
+    # --- side panels: small ---
+    ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
+    
+    # --- side panels: no grid ---
+    ggside.panel.grid = element_blank(),
+    
+    # --- side panels: no frame/border of their own, hide their axes ---
+    ggside.panel.border = element_blank(),
+    ggside.panel.background = element_blank(),
+    ggside.axis.text  = element_blank(),
+    ggside.axis.ticks = element_blank(),
+    
+  legend.position = "bottom"
+  )+
+  labs(
+    x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
+    y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
+  ) + 
+  coord_cartesian()->c
+c
+```
+
+
+- hard to distinguish different regeneration clusters
+- variable type are not necessarly colinear, can even be non correlated
+- field-derived and lidar-derived variables roughly non correlated, catching different dimensions
+- prediction at the subplot scale = add variability
+
+# Dimensions of light distribution controlling regeneration structure and composition
+
+## plot 
+
+### Between plots trend
+
+```{r}
+metric3d_all_unsliced %>% 
+  filter(subplot=="plot",time==12) %>% 
+  select(plot,
+         rb_mean,rb_cv) %>% 
+  left_join(H_ext_all %>% 
+              filter(target==0.9,subplot=="plot",time==12)) %>% 
+  mutate(rb_mean=log(rb_mean)) %>% 
+  left_join(regen_cat)->light_pca
+
+df_pca=light_pca[,c("rb_mean","z_cross_agg","ext_ref_agg","padTot_agg",
+                  "padAbove_agg","zPAD50_agg")]#"rb_ref_agg","padAbove_cv","rb_cv",
+
+pca_res <- prcomp(df_pca,
+                  center = TRUE, scale. = TRUE)
+
+light_pca_pred = cbind(light_pca,predict(pca_res,df_pca)[,c(1,2)])
+
+
+var <- get_pca_var(pca_res)
+
+var_coord <- as.data.frame(var$coord[, 1:2])
+colnames(var_coord) <- c("PC1", "PC2")
+
+var_coord$variable <- rownames(var_coord)
+var_coord$contrib <- var$contrib[, 1] + var$contrib[, 2]
+var_coord$cos2 <- var$cos2[, 1] + var$cos2[, 2]
+
+
+var_coord=var_coord %>%
+  left_join(var_meta,by="variable") %>% 
+  mutate(label=case_when(variable=="slope_cross_agg"~paste0(label," 0.9"),
+                         variable=="z_cross_agg"~paste0(label," 0.9"),
+                         TRUE~label))
+
+ggplot() +
+  geom_point(
+    data = light_pca_pred,
+    aes(PC1, PC2, color = reg_category),
+    size=2.5,show.legend = FALSE
+  ) +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
+  
+  new_scale_color() +
+  
+  geom_segment(
+    data = var_coord,
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
+    arrow = arrow(length = unit(0.20, "cm")),
+    lineend = "round"
+  ) +
+  geom_text_repel(
+    data = var_coord,
+    aes(x = PC1*5, y = PC2*5, label = label,  color = type), #alpha = contrib,
+    size = 3, show.legend = FALSE
+  ) +
+  geom_xsideboxplot(
+    data = light_pca_pred %>% filter(!is.na(reg_category)),
+    aes(x = PC1, y = reg_category, fill = reg_category),
+    orientation = "y", outliers = FALSE
+  ) +
+  geom_ysideboxplot(
+    data = light_pca_pred %>% filter(!is.na(reg_category)),
+    aes(y = PC2, x = reg_category, fill = reg_category),
+    orientation = "x", outliers = FALSE
+  )+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  scale_color_brewer(name = "Variable type", palette = "Dark2") +
+  guides(color="none")+
+  
+  coord_equal() +
+  theme_minimal() +
+  guides(
+    alpha = "none",
+    color = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  labs(
+    x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
+    y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
+  )+
+  theme(
+    # --- main panel: black frame ---
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
+    
+    # --- side panels: small ---
+    ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
+    
+    # --- side panels: no grid ---
+    ggside.panel.grid = element_blank(),
+    
+    # --- side panels: no frame/border of their own, hide their axes ---
+    ggside.panel.border = element_blank(),
+    ggside.panel.background = element_blank(),
+    ggside.axis.text  = element_blank(),
+    ggside.axis.ticks = element_blank(),
+    
+  legend.position = "bottom"
+  )
+
+
+# light_pca %>% 
+#   pivot_longer(cols=-c("plot","time","subplot","target","reg_category","mean_reg")) %>% 
+#   filter(is.finite(value)) %>%    
+#   group_by(name) %>% 
+#   mutate(value=scale(value)) %>% 
+#   ungroup() %>% 
+#   select(plot,subplot,reg_category,name,value) %>% 
+#   left_join(var_meta,
+#             by=c("name"="variable")) %>% 
+#   ggplot(aes(label,value,fill=reg_category))+
+#   geom_boxplot()+
+#   scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey")
+
+```
+
+### comparative effects of plant material and light distribution on the structure of regeneration
+
+```{r}
+d <- metric3d_all_unsliced %>% 
+  filter(subplot=="plot",time==12) %>% 
+  select(plot,
+         rb_mean,rb_cv) %>% 
+  left_join(H_ext_all %>% 
+              filter(target==0.9,subplot=="plot",time==12)) %>% 
+  mutate(rb_mean=log(rb_mean)) %>% 
+  left_join(regen_cat) %>% 
+  select(any_of(c("plot","reg_category","rb_mean","z_cross_agg","ext_ref_agg","padTot_agg",
+                  "padAbove_agg","zPAD50_agg"))) %>%
+  pivot_longer(cols = -c("plot","reg_category")) %>%
+  filter(!is.na(reg_category)) %>%
+  mutate(name=factor(name,levels =c("rb_mean","ext_ref_agg","z_cross_agg","padTot_agg",
+                  "padAbove_agg","zPAD50_agg") )) %>% 
+  group_by(name) %>% mutate(value = as.numeric(scale(value))) %>%
+  ungroup() %>%
+  left_join(var_meta, by = c("name" = "variable")) %>% 
+  arrange(name) %>%        # type's level order drives it
+  mutate(label=case_when(name=="slope_cross_agg"~paste0(label," 0.9"),
+                         name=="z_cross_agg"~paste0(label," 0.9"),
+                         TRUE~label),
+         label = fct_inorder(label))
+
+
+d <- d %>% mutate(reg_category = factor(reg_category))
+
+cld_one <- function(df) {
+  lev <- levels(droplevels(df$reg_category))
+  if (length(lev) < 2) return(tibble(reg_category = lev, letter = ""))
+  
+  kw <- kruskal.test(value ~ droplevels(reg_category), data = df)
+  if (is.na(kw$p.value) || kw$p.value > 0.05)
+    return(tibble(reg_category = lev, letter = "a"))   # no differences
+  
+  dt <- dunn_test(df, value ~ reg_category, p.adjust.method = "BH")
+  pv <- setNames(dt$p.adj, paste(dt$group1, dt$group2, sep = "-"))
+  l  <- multcompLetters(pv)$Letters
+  tibble(reg_category = names(l), letter = unname(l))
+}
+
+cld_df <- d %>%
+  group_by(type, label) %>%
+  group_modify(~ cld_one(.x)) %>%
+  ungroup() %>%
+  mutate(reg_category = factor(reg_category, levels = levels(d$reg_category))) %>%
+  left_join(
+    d %>% group_by(type, label, reg_category) %>%
+      summarise(y = max(value, na.rm = TRUE), .groups = "drop"),
+    by = c("type", "label", "reg_category")
+  )
+
+
+ggplot(d, aes(label, value, fill = reg_category)) +
+  geom_boxplot(position = position_dodge(width = 0.8, preserve = "single"),
+               width=0.5,outlier.shape = NA) +
+  geom_point(aes(color=reg_category),
+             position = position_jitterdodge(jitter.width = 0.15,
+                                             dodge.width = 0.8,
+                                             seed = 1),
+             size = 1, alpha = 0.8, shape = 16,
+             show.legend = FALSE) +
+  geom_text(data = cld_df,
+            aes(x = label, y = y + 0.25, label = letter, group = reg_category),
+            position = position_dodge(width = 0.8),
+            inherit.aes = FALSE, size = 3, vjust = 0) +
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
+  facet_grid(~type, scales = "free_x") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12)))+
+  labs(y="Scaled values",x="")+
+  theme_minimal(base_size = 9)+
+  theme(legend.position = "none")->a
+
+
+ggplot() +
+  geom_point(
+    data = light_pca_pred,
+    aes(PC1, PC2, color = reg_category),
+    size=2.5,show.legend = TRUE
+  ) +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
+  
+  new_scale_color() +
+  
+  geom_segment(
+    data = var_coord,
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
+    arrow = arrow(length = unit(0.20, "cm")),
+    lineend = "round"
+  ) +
+  geom_text_repel(
+    data = var_coord,
+    aes(x = PC1*5, y = PC2*5, label = label,  color = type), #alpha = contrib,
+    size = 3, show.legend = FALSE
+  ) +
+  scale_color_brewer(name = "Variable type", palette = "Dark2") +
+  guides(color="none")+
+  geom_hline(yintercept = 0, colour = "grey85", linewidth = 0.3) +
+  geom_vline(xintercept = 0, colour = "grey85", linewidth = 0.3) +  
+  coord_cartesian() +
+  theme_minimal(base_size = 9) +
+
+  guides(
+    alpha = "none",
+    color = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  labs(
+    x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
+    y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
+  )+
+  theme(
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
+    legend.position = "left"
+  )->b
+
+
+cowplot::plot_grid(b+theme(legend.position="none"),a,ncol=2,align = "h", axis = "tb",
+                   rel_widths = c(1, 1.5))
+
+
+```
+
+
+
+### effect size
+
+```{r}
+pca_data_plot %>% 
+  left_join(metric3d_all_unsliced %>% 
+              filter(subplot=="plot",time==12) %>% 
+              # filter(slice_num==1) %>% 
+              select(plot,
+                     rb_mean,rb_cv)) %>% 
+  left_join(H_ext_all %>% 
+              filter(target==0.5,subplot=="plot",time==12)) %>% 
+  mutate(rb_mean=log(rb_mean),
+         rb_cv=log(rb_cv))->light_test
+
+
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv","abundance_cv")
+explaining <- c("rb_mean","z_cross_agg","ext_ref_agg","slope_cross_agg","rb_cv","z_cross_cv","ext_ref_cv","slope_cross_cv")
+
+
+
+std_coef <- function(d, y, x) { #, covar = "browsing"
+  d <- d %>%
+    select(all_of(c(y, x))) %>% #, covar
+    drop_na() %>%
+    mutate(across(where(is.numeric), ~ as.numeric(scale(.))))  # factors (e.g. browsing) left alone
+  f <- reformulate(c( x), response = y) #covar,
+  unname(coef(lm(f, data = d))[x])
+}
+
+# --- bootstrap distribution of that coef ---
+boot_coef <- function(d, y, x, B = 1000) { #, covar = "browsing"
+  d <- d %>% select(all_of(c(y, x))) %>% drop_na() %>% # , covar
+      mutate(across(where(is.numeric), ~ as.numeric(scale(.)))) 
+  n <- nrow(d)
+  f <- reformulate(c( x), response = y) # covar,
+  map_dbl(seq_len(B), function(b) {
+    db <- d[sample(n, n, replace = TRUE), ]  # <- move this line out of the loop to scale once
+    unname(coef(lm(f, data = db))[x])
+  })
+}
+
+results <- expand_grid(explained = explained, explaining = explaining) %>%
+  mutate(
+    estimate = map2_dbl(explained, explaining, ~ std_coef(light_test, .x, .y)),
+    draws    = map2(explained, explaining, ~ boot_coef(light_test, .x, .y, B = 1000))
+  )
+
+
+boot_long <- results %>%
+  select(explained, explaining, draws) %>%
+  unnest_longer(draws) %>%
+  rename(coef = draws)
+
+boot_long %>%
+  group_by(explained, explaining) %>%
+  summarise(
+    lo  = unname(quantile(coef, 0.05)),
+    med = unname(quantile(coef, 0.5)),
+    hi  = unname(quantile(coef, 0.95)),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(cols=c("explained","explaining")) %>% 
+  left_join(var_meta,by=c("value"="variable")) %>% 
+  select(-value) %>% 
+  pivot_wider(names_from="name",values_from = c("label","type")) %>% 
+  mutate(
+    type_explained = factor(type_explained, levels = c("Composition","Quantity","Complexity")),
+    excl0 = lo > 0 | hi < 0                         # interval excludes zero
+  ) %>% 
+  ggplot( aes(x = med, y = label_explained)) +
+  geom_vline(xintercept = 0, linetype = 2, linewidth = .3, colour = "grey70") +
+  geom_linerange(aes(xmin = lo, xmax = hi, colour = excl0), linewidth = .9) +
+  geom_point(aes(colour = excl0), size = 1.3) +
+  scale_colour_manual(
+    values = c(`TRUE` = "#1f5fa8", `FALSE` = "grey78")
+  ) +
+  guides(colour="none")+
+  facet_grid(type_explained ~ label_explaining, scales = "free_y", space = "free_y") +
+  labs(x = "Standardized coefficient", y = NULL) +
+  theme_bw(base_size = 9) +
+  theme(
+    panel.spacing.x = unit(.6, "lines"),
+    strip.text.y    = element_text(angle = 0),
+    panel.grid.minor = element_blank(),
+    legend.position = "top"
+  )
+
+# 
+#  anova(lm(richness~rb_sd+rb_mean,data=light_test))
+# anova(lm(richness~rb_cv+rb_mean,data=light_test))
+# summary(lm(richness~rb_mean,data=light_test))
+# summary(lm(richness~rb_cv,data=light_test))
+```
+## subplot
+
+### between subplot
+
+```{r}
+metric3d_all_unsliced %>%
+  filter(subplot!="plot",time==12) %>%
+  # filter(slice_num==1) %>%
+  select(plot,subplot,
+         rb_mean,rb_cv) %>%
+  left_join(H_ext_all %>%
+              filter(extinction==0.88,subplot!="plot",time==12)) %>%
+  mutate(rb_mean=log(rb_mean)) %>%
+  rename("Radiative\nbudget mean"=rb_mean, "Radiative\nbudget var."=rb_cv,
+      "Half-ext. \nheight"=mean, "Half-ext.\nheight (SD)"=sd,
+      "Extinction\nspeed"=mean_slope, "Extinction\nspeed (SD)"=sd_slope) %>%
+  left_join(regen_cat_subplot)->light_pca
+
+
+
+# Run PCA (center and scale recommended)
+pca_res <- prcomp(light_pca[,c("Radiative\nbudget mean", "Radiative\nbudget var.",
+      "Half-ext. \nheight", "Half-ext.\nheight (SD)",
+      "Extinction\nspeed", "Extinction\nspeed (SD)")], center = TRUE, scale. = TRUE)
+
+# fviz_pca_biplot(
+#   pca_res,
+#   col.var = "contrib",            # color by contribution
+#   gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+#   repel = TRUE
+# ) 
+# 
+# GGally::ggpairs(light_pca)
+
+
+light_pca_pred = cbind(light_pca,predict(pca_res,
+                                         light_pca[,c("Radiative\nbudget mean", "Radiative\nbudget var.",
+                                                      "Half-ext. \nheight", "Half-ext.\nheight (SD)",
+                                                      "Extinction\nspeed", "Extinction\nspeed (SD)")])[,c(1,2)])
+
+
+var <- get_pca_var(pca_res)
+
+var_coord <- as.data.frame(var$coord[, 1:2])
+colnames(var_coord) <- c("PC1", "PC2")
+
+var_coord$variable <- rownames(var_coord)
+var_coord$contrib <- var$contrib[, 1] + var$contrib[, 2]
+var_coord$cos2 <- var$cos2[, 1] + var$cos2[, 2]
+
+
+var_coord=var_coord %>% 
+  mutate(type=case_when(variable%in%c("Radiative\nbudget mean", "Half-ext. \nheight", "Extinction\nspeed")~"Mean",
+                        variable%in%c("Radiative\nbudget var.","Half-ext.\nheight (SD)","Extinction\nspeed (SD)")~"Variability"))
+
+
+ggplot() +
+  geom_point(
+    data = light_pca_pred,
+    aes(PC1, PC2, color = reg_category),
+    size=2.5
+  ) +
+  scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
+
+  new_scale_color() +
+
+  geom_segment(
+    data = var_coord,
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
+    arrow = arrow(length = unit(0.20, "cm")),
+    lineend = "round"
+  ) +
+  geom_text_repel(
+    data = var_coord,
+    aes(x = PC1*5, y = PC2*5, label = variable,  color = type), #alpha = contrib,
+    size = 3, show.legend = FALSE
+  ) +
+  scale_color_brewer(name = "Variable type", palette = "Dark2") +
+
+  coord_equal() +
+  theme_minimal() +
+  guides(
+    alpha = "none",
+    color = guide_legend(override.aes = list(alpha = 1))
+  ) +
+  labs(
+    x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
+    y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
+  )
+
+
+
+metric3d_all_unsliced %>% 
+  filter(subplot!="plot",time==12,plot!="GER18") %>% 
+  select(plot,
+         rb_mean,rb_cv) %>% 
+  left_join(H_ext_all %>% 
+              filter(extinction==0.88,subplot!="plot",time==12)) %>% 
+  rename("Radiative\nbudget mean"=rb_mean, "Radiative\nbudget var."=rb_cv,
+      "Half-ext. \nheight"=mean, "Half-ext.\nheight (SD)"=sd,
+      "Extinction\nspeed"=mean_slope, "Extinction\nspeed (SD)"=sd_slope) %>% 
+  pivot_longer(cols=-c("plot","time","subplot","extinction")) %>% 
+  filter(is.finite(value)) %>% 
+  group_by(name) %>% 
+  mutate(value=scale(value)) %>% 
+  ungroup() %>% 
+  select(plot,subplot,name,value) %>% 
+  left_join(regen_cat_subplot) %>%
+  filter(!is.na(reg_category)) %>% 
+  ggplot(aes(name,value,fill=reg_category))+
+  geom_boxplot()+
+  scale_fill_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey")
+
+```
+
+
+### effect size
+
+```{r}
+pca_data_subplot %>% 
+  left_join(metric3d_all %>% 
+              filter(subplot!="plot",time==12) %>% 
+              filter(slice_num==1) %>% 
+              select(plot,subplot,
+                     rb_mean,rb_cv)) %>% 
+  left_join(H_ext_all %>% 
+              filter(extinction==0.5,subplot!="plot",time==12))%>% 
+  mutate(rb_mean=log(rb_mean))->light_test_sub
+
+
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
+explaining <- c("rb_mean","rb_cv","mean","sd","mean_slope","sd_slope")
+
+std_coef <- function(d, y, x) {#, covar = "browsing"
+  d <- d %>%
+    select(all_of(c(y, x, "plot"))) %>%#, covar
+    drop_na() %>%
+    mutate(plot = factor(plot)) %>%                              # grouping factor, kept out of scaling
+    mutate(across(where(is.numeric), ~ as.numeric(scale(.))))    # factors (browsing, plot) left alone
+  f <- as.formula(paste0(y, " ~ ",  " + ", x, " + (1 | plot)"))#covar,
+  m <- lmer(f, data = d, control = lmerControl(calc.derivs = FALSE))
+  unname(fixef(m)[x])
+}
+
+# --- bootstrap distribution of that coef ---
+boot_coef <- function(d, y, x, B = 1000) {# covar = "browsing",
+  d <- d %>% select(all_of(c(y, x, "plot"))) %>% drop_na() %>%#covar, 
+      mutate(plot = factor(plot)) %>%
+      mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
+  n <- nrow(d)
+  f <- as.formula(paste0(y, " ~ ", " + ", x, " + (1 | plot)"))# covar,
+  map_dbl(seq_len(B), function(b) {
+    db <- d[sample(n, n, replace = TRUE), ]
+    m  <- suppressMessages(suppressWarnings(
+            lmer(f, data = db, control = lmerControl(calc.derivs = FALSE))))
+    unname(fixef(m)[x])
+  })
+}
+
+
+results <- expand_grid(explained = explained, explaining = explaining) %>%
+  mutate(
+    estimate = map2_dbl(explained, explaining, ~ std_coef(light_test_sub, .x, .y)),
+    draws    = map2(explained, explaining, ~ boot_coef(light_test_sub, .x, .y, B = 1000))
+  )
+
+
+boot_long <- results %>%
+  select(explained, explaining, draws) %>%
+  unnest_longer(draws) %>%
+  rename(coef = draws)
+
+boot_long %>%
+  group_by(explained, explaining) %>%
+  summarise(
+    lo  = unname(quantile(coef, 0.05)),
+    med = unname(quantile(coef, 0.5)),
+    hi  = unname(quantile(coef, 0.95)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    type = factor(case_when(
+      explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
+      explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf") ~ "Quantity",
+      explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
+    ), levels = c("Composition","Quantity","Complexity")),
+    excl0 = lo > 0 | hi < 0,                         # interval excludes zero
+    explained = recode(explained,
+      richness="Richness\ntotal", richness_sapling="Richness\nsaplings",
+      H="Shannon\nindex", cwm_shade="Shade tolerance",
+      abundance="Abundance", pad_tot="PAD\ntotal",
+      h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
+      empty_gf="Gap fraction", H_height="Vertical\ndistribution",
+      h_cv="Height\nvariability", pad_cv="PAD\nvariability",
+      ri="Rumple index",fhd="Foliage height \ndiversity"),
+    # explained = factor(explained, levels = rev(explained_order)),
+    explaining = recode(explaining,
+      rb_mean="Radiative\nbudget mean", rb_cv="Radiative\nbudget var.",
+      mean="Half-ext. \nheight", sd="Half-ext.\nheight (SD)",
+      mean_slope="Extinction\nspeed", sd_slope="Extinction\nspeed (SD)")
+  ) %>% 
+  ggplot( aes(x = med, y = explained)) +
+  geom_vline(xintercept = 0, linetype = 2, linewidth = .3, colour = "grey70") +
+  geom_linerange(aes(xmin = lo, xmax = hi, colour = excl0), linewidth = .9) +
+  geom_point(aes(colour = excl0), size = 1.3) +
+  scale_colour_manual(
+    values = c(`TRUE` = "#1f5fa8", `FALSE` = "grey78")
+  ) +
+  guides(colour="none")+
+  facet_grid(type ~ explaining, scales = "free_y", space = "free_y") +
+  labs(x = "Standardized coefficient", y = NULL) +
+  theme_bw(base_size = 9) +
+  theme(
+    panel.spacing.x = unit(.6, "lines"),
+    strip.text.y    = element_text(angle = 0),
+    panel.grid.minor = element_blank(),
+    legend.position = "top"
+  )
+
+```
+
+# effect of adults on light distribution and regeneration structure
+
+
+```{r}
+sem = plot_df %>% 
+  select(plot,n_trees_alive,species_richness_alive,mean_dbh_alive_cm,
+         mean_height_alive_m,mortality_rate) %>% 
+  left_join(light_test)
+
+
+
+explained <- c("richness","richness_sapling","H","cwm_shade","abundance","pad_tot","Height_increment_mn","empty_gf","H_height","fhd","ri","pad_cv")
+explaining <- c("n_trees_alive","species_richness_alive","mean_dbh_alive_cm","mean_height_alive_m","mortality_rate","browsing")
+
+
+
+std_coef <- function(d, y, x) {
+  d <- d %>%
+    select(all_of(c(y, x))) %>%
+    drop_na() %>%
+    mutate(across(where(is.numeric), ~ as.numeric(scale(.))))  # factors (e.g. browsing) left alone
+  f <- reformulate(c( x), response = y)
+  unname(coef(lm(f, data = d))[x])
+}
+
+# --- bootstrap distribution of that coef ---
+boot_coef <- function(d, y, x,  B = 1000) {
+  d <- d %>% select(all_of(c(y, x))) %>% drop_na() %>%
+      mutate(across(where(is.numeric), ~ as.numeric(scale(.)))) 
+  n <- nrow(d)
+  f <- reformulate(c( x), response = y)
+  map_dbl(seq_len(B), function(b) {
+    db <- d[sample(n, n, replace = TRUE), ]  # <- move this line out of the loop to scale once
+    unname(coef(lm(f, data = db))[x])
+  })
+}
+
+results <- expand_grid(explained = explained, explaining = explaining) %>%
+  mutate(
+    estimate = map2_dbl(explained, explaining, ~ std_coef(sem, .x, .y)),
+    draws    = map2(explained, explaining, ~ boot_coef(sem, .x, .y, B = 1000))
+  )
+
+
+boot_long <- results %>%
+  select(explained, explaining, draws) %>%
+  unnest_longer(draws) %>%
+  rename(coef = draws)
+
+boot_long %>%
+  group_by(explained, explaining) %>%
+  summarise(
+    lo  = unname(quantile(coef, 0.1)),
+    med = unname(quantile(coef, 0.5)),
+    hi  = unname(quantile(coef, 0.9)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    type = factor(case_when(
+      explained %in% c("richness","richness_sapling","H","cwm_shade") ~ "Composition",
+      explained %in% c("abundance","pad_tot","h_mean","Height_increment_mn","empty_gf") ~ "Quantity",
+      explained %in% c("H_height","h_cv","pad_cv","ri","fhd") ~ "Complexity"
+    ), levels = c("Composition","Quantity","Complexity")),
+    excl0 = lo > 0 | hi < 0,                         # interval excludes zero
+    explained = recode(explained,
+      richness="Richness\ntotal", richness_sapling="Richness\nsaplings",
+      H="Shannon\nindex", cwm_shade="Shade tolerance",
+      abundance="Abundance", pad_tot="PAD\ntotal",
+      h_mean="Mean\nheight", Height_increment_mn="Height\nincrement",
+      empty_gf="Gap fraction", H_height="Vertical\ndistribution",
+      h_cv="Height\nvariability", pad_cv="PAD\nvariability",
+      ri="Rumple index",fhd="Foliage height \ndiversity"),
+    # explained = factor(explained, levels = rev(explained_order)),
+    explaining = recode(explaining,
+      n_trees_alive="Number of\n living trees", species_richness_alive="Adult richness",
+      mean_dbh_alive_cm="Mean diameter", mean_height_alive_m="Mean height",
+      mortality_rate="Mortality"),
+    
+  ) %>% 
+  ggplot( aes(x = med, y = explained)) +
+  geom_vline(xintercept = 0, linetype = 2, linewidth = .3, colour = "grey70") +
+  geom_linerange(aes(xmin = lo, xmax = hi, colour = excl0), linewidth = .9) +
+  geom_point(aes(colour = excl0), size = 1.3) +
+  scale_colour_manual(
+    values = c(`TRUE` = "#1f5fa8", `FALSE` = "grey78")
+  ) +
+  guides(colour="none")+
+  facet_grid(type ~ explaining, scales = "free_y", space = "free_y") +
+  labs(x = "Standardized coefficient", y = NULL) +
+  theme_bw(base_size = 9) +
+  theme(
+    panel.spacing.x = unit(.6, "lines"),
+    strip.text.y    = element_text(angle = 0),
+    panel.grid.minor = element_blank(),
+    legend.position = "top"
+  )
+
+```
+
+# Disentangling indirect effect of adults
+
+```{r}
+sem = plot_df %>% 
+  select(plot,n_trees_alive,species_richness_alive,mean_dbh_alive_cm,
+         mean_height_alive_m,mortality_rate) %>% 
+  left_join(light_test) %>% 
+  mutate(rb_mean=log(rb_mean)) %>% 
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.)))) #%>% 
+  # rename("Number of\n living trees"=n_trees_alive, "Adult richness"=species_richness_alive,
+  #     "Mean diameter"=z, "Mean height"=mean_height_alive_m,
+  #     mortality_rate="Mortality")
+
+
+
+library(piecewiseSEM)
+library(semPlot)
+library(lavaan)
+
+lavaan_model <- '
+  richness ~ mean_slope + rb_cv + n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  mean_slope ~  n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  rb_cv    ~  n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  
+'
+
+
+lavaan_model <- '
+  richness ~ mean + rb_cv + n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  h_mean ~   mean + rb_cv + n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  empty_gf~  mean + rb_mean + sd + n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  abundance ~ mean_slope + mean + rb_mean + sd + n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+ mean_height_alive_m
+  pad_cv ~ mean + rb_mean + n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+ mean_height_alive_m
+  mean_slope ~  n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  sd ~ n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  rb_cv    ~  n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  rb_mean  ~ n_trees_alive+ species_richness_alive+ mean_dbh_alive_cm+
+         mean_height_alive_m
+  
+'
+
+fit_lav <- sem(lavaan_model, data = sem)
+summary(fit_lav)
+# Plot
+semPaths(
+  object         = fit_lav,
+  what           = "std",
+  whatLabels     = "std",
+  layout         = "tree2",
+  edge.label.cex = 1.2,
+  node.label.cex = 1.2,
+  residuals      = FALSE,
+  intercepts     = FALSE
+)
+
+
+
+
+# 1. Extract coefficients from piecewiseSEM
+coef_table <- coefs(fit_lav, standardize = "scale")
+
+# 2. Add significance stars
+coef_table$label <- with(coef_table, ifelse(P.Value < 0.001, paste0(round(Std.Estimate, 2), "***"),
+                                    ifelse(P.Value < 0.01,  paste0(round(Std.Estimate, 2), "**"),
+                                    ifelse(P.Value < 0.05,  paste0(round(Std.Estimate, 2), "*"),
+                                    ifelse(P.Value < 0.1,   paste0(round(Std.Estimate, 2), "."),
+                                                             round(Std.Estimate, 2))))))
+
+# 3. Plot with custom labels
+semPaths(
+  object         = fit_lav,
+  what           = "std",
+  whatLabels     = "std",
+  layout         = "tree2",
+  edge.label.cex = 1.2,
+  node.label.cex = 1.2,
+  residuals      = FALSE,
+  intercepts     = FALSE,
+  edgeLabels     = coef_table$label  # inject piecewiseSEM labels with stars
+)
+
+
+
+mod_sem <- list(
+  rb_mean     = lm(rb_mean     ~ species_richness_alive,        data = sem),
+  richness_sapling = lm(richness_sapling ~ rb_mean + species_richness_alive, data = sem)
+)
+boot_sem <- semEff::bootEff(mod_sem, R = 500, seed = 13, parallel = "no")
+
+
+
+sem_eff <- semEff(boot_sem)
+summary(sem_eff, response = "richness_sapling")
+
+S <- sem_eff$Summary$richness
+
+
+eff_tab <- getEffTable(sem_eff)          # clean numeric table, all responses
+
+plot_df <- subset(
+  eff_tab,
+  response == "richness.sapling" & effect_type %in% c("direct", "indirect", "total")
+)
+plot_df$effect_type <- factor(plot_df$effect_type,
+                              levels = c("direct", "indirect", "total"),
+                              labels = c("Direct", "Indirect", "Total"))
+plot_df$sig <- with(plot_df, lower_ci > 0 | upper_ci < 0)
+
+ggplot(plot_df, aes(effect, predictor, colour = effect_type)) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey70") +
+  geom_pointrange(
+    aes(xmin = lower_ci, xmax = upper_ci, alpha = sig),
+    position  = position_dodge(width = 0.6),
+    linewidth = 0.7, fatten = 3
+  ) +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.35), guide = "none") +
+  scale_colour_manual(values = c(Direct = "#2c7fb8",
+                                 Indirect = "#d95f0e",
+                                 Total = "#31a354")) +
+  labs(x = "Standardised effect on richness", y = NULL, colour = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.y = element_blank(),
+        legend.position = "top")
+```
+
+
+```{r}
+library(semEff)
+library(DiagrammeR)
+
+et <- getEffTable(sem_eff)   # the tidy table from before
+
+# one direct path: its coefficient + whether the CI excludes zero
+path <- function(resp, pred) {
+  x <- et[et$effect_type == "direct" & et$response == resp & et$predictor == pred, ]
+  list(coef = x$effect, sig = x$lower_ci > 0 | x$upper_ci < 0)
+}
+
+sra_mean  <- path("rb.mean",     "species.richness.alive")  # indirect path, step 1
+mean_rich <- path("richness.sapling", "rb.mean")                    # indirect path, step 2
+sra_rich  <- path("richness.sapling", "species.richness.alive")  # direct path
+
+# indirect effect (sra -> mean -> richness), straight from the table
+ind <- et[et$effect_type == "indirect" &
+          et$response == "richness.sapling" &
+          et$predictor == "species.richness.alive", "effect"]
+
+# style each arrow: colour = sign, solid = CI excludes 0, thickness = |coef|
+edge <- function(from, to, p) {
+  col <- if (p$coef >= 0) "#2166ac" else "#b2182b"
+  sprintf('%s -> %s [label = " %.2f", color = "%s", fontcolor = "%s", style = "%s", penwidth = %.2f]',
+          from, to, p$coef, col, col,
+          if (isTRUE(p$sig)) "solid" else "dashed",
+          1 + 4 * abs(p$coef))
+}
+
+dot <- sprintf('
+digraph sem {
+  graph [rankdir = LR, ranksep = 1.2, nodesep = 0.9,
+         label = "Indirect effect (species richness -> mean -> richness): %.2f",
+         labelloc = "b", fontname = "Helvetica", fontsize = 10, fontcolor = "#777777"]
+  node  [shape = box, style = "rounded,filled", fillcolor = "#f7f7f7",
+         color = "#666666", fontname = "Helvetica", fontsize = 12, margin = "0.22,0.13"]
+  edge  [fontname = "Helvetica", fontsize = 11, arrowsize = 0.8]
+
+  sra  [label = "species richness\\n(alive)"]
+  mean [label = "mean"]
+  rich [label = "richness"]
+
+  %s
+  %s
+  %s
+}',
+  ind,
+  edge("sra",  "mean", sra_mean),
+  edge("mean", "rich", mean_rich),
+  edge("sra",  "rich", sra_rich))
+
+grViz(dot)
+```
+
+```{r}
+library(piecewiseSEM)
+psem_mod <- psem(
+  lm(richness ~ mean + species_richness_alive, data = sem),
+  lm(mean ~ species_richness_alive,            data = sem),
+  data = sem
+)
+
+plot(
+  psem_mod,
+  show       = "std",     # standardized coefficients on the arrows
+  digits     = 2,
+  ns_dashed  = TRUE,      # non-significant paths dashed
+  node_attrs = data.frame(shape = "rectangle", fillcolor = "#f7f7f7",
+                          color = "#666666", fontname = "Helvetica"),
+  edge_attrs = data.frame(fontname = "Helvetica")
+)
+```
+
+# species analysis
+
+```{r}
+data.frame(plot=unique(regen_metrics_subplot$species$plot)) %>% 
+  expand_grid(subplot=unique(regen_metrics_subplot$species$subplot)) %>% 
+  expand_grid(Species=unique(regen_metrics_subplot$species$Species)) %>% 
+  filter(Species!="NA") %>% 
+  left_join(regen_metrics_subplot$species) %>% 
+  select(plot,subplot,species=Species,abundance) %>% 
+  mutate(abundance=if_else(is.na(abundance),0,abundance)) %>% 
+  left_join(metric3d_all %>% 
+              filter(time==12,subplot!="plot") %>% 
+              select(plot,subplot,rb_mean,rb_cv,occupied_gf)) %>% 
+  left_join(H_ext_all %>% 
+              filter(time==12,extinction==0.5) %>% 
+              select(plot,subplot,mean,mean_slope)) %>% 
+  group_by(species) %>% 
+  mutate(n=n()) %>% 
+  filter(n>30) %>% 
+  select(-n) %>% 
+  pivot_longer(cols=-c("plot","subplot","species","abundance")) %>% 
+  ggplot(aes(abundance,value))+
+  geom_point()+
+  facet_wrap(species~name,scales="free", ncol=5)
+
+
+
+regen_metrics_plot$species %>% 
+  select(plot,species=Species,abundance) %>% 
+  left_join(metric3d_all %>% 
+              filter(time==12,subplot=="plot") %>% 
+              select(plot,subplot,slice_num,rb_mean,rb_cv,occupied_gf)) %>% 
+  left_join(H_ext_all %>% 
+              filter(time==12,extinction==0.5) %>% 
+              select(plot,subplot,mean,mean_slope)) %>% View()
+  filter(plot!="GER10") %>% 
+  group_by(species) %>% 
+  mutate(n=n()) %>% 
+  filter(n>30) %>% 
+  select(-n) %>% 
+  ggplot(aes(log(abundance),log(rb_mean),color=species))+
+  geom_point()+
+  geom_smooth(method="gam",se = FALSE)+
+  facet_grid(species~slice_num)
+  
+  
+data.frame(plot=unique(regen_metrics_subplot$species$plot)) %>% 
+  # expand_grid(subplot=unique(regen_metrics_subplot$species$subplot)) %>% 
+  expand_grid(Species=unique(regen_metrics_subplot$species$Species)) %>% 
+  filter(Species!="NA") %>% 
+  left_join(regen_metrics_subplot$species) %>% 
+  select(plot,species=Species,abundance) %>% 
+  mutate(abundance=if_else(is.na(abundance),0,abundance)) %>% 
+  left_join(metric3d_all %>% 
+              filter(time==12,subplot=="plot") %>% 
+              select(plot,subplot,slice_num,rb_mean,rb_cv,occupied_gf)) %>% 
+  left_join(H_ext_all %>% 
+              filter(time==12,extinction==0.5) %>% 
+              select(plot,subplot,mean,mean_slope)) %>%
+  filter(plot!="GER10") %>% 
+  group_by(species) %>% 
+  mutate(n=n()) %>% 
+  filter(n>30) %>% 
+  select(-n) %>% 
+  ggplot(aes(abundance,log(rb_mean),color=species))+
+  geom_point()+
+  geom_smooth(method="gam",se = FALSE)+
+  facet_grid(species~slice_num)
+  
+
+
+
+df <- regen_metrics_subplot$all %>% select(plot,subplot) %>% unique() %>% 
+  expand_grid(Species=unique(regen_metrics_subplot$species$Species))%>%
+  filter(Species != "NA") %>%
+  left_join(regen_metrics_subplot$species) %>%
+  select(plot, subplot, species = Species, abundance) %>%
+  mutate(abundance=if_else(is.na(abundance),0,abundance),
+         presence = if_else(is.na(abundance), "absent", "present")) %>%
+  left_join(metric3d_all %>%
+              filter(time == 12, subplot != "plot", slice_num == 1) %>%
+              select(plot, subplot, rb_mean, rb_cv, occupied_gf)) %>%
+  mutate(log_rb_mean = log(rb_mean)) %>%
+  filter(is.finite(log_rb_mean))
+
+
+
+df %>%
+  group_by(species) %>%
+  filter(n_distinct(presence) == 2, all(table(presence) >= 1)) %>%  # need both groups, a few obs each
+  wilcox_test(log_rb_mean ~ presence) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+regen_metrics_subplot$all %>% select(plot,subplot) %>% unique() %>% 
+  expand_grid(Species=unique(regen_metrics_subplot$species$Species)) %>% 
+  filter(Species!="NA") %>% 
+  left_join(regen_metrics_subplot$species) %>% 
+  select(plot,subplot,species=Species,abundance) %>% 
+  mutate(presence=if_else(is.na(abundance),"absent","present")) %>% 
+  left_join(metric3d_all %>% 
+              filter(time==12,subplot!="plot",slice_num==1) %>% 
+              select(plot,subplot,rb_mean,rb_cv,occupied_gf)) %>% 
+  ggplot(aes(species,log(rb_mean),color=presence))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter()+
+  ylim(c(5.5,9))
+  
+
+
+
+df <- regen_metrics_plot$all %>% select(plot) %>% unique() %>% 
+  expand_grid(Species=unique(regen_metrics_plot$species$Species)) %>% 
+  filter(Species!="NA") %>% 
+  left_join(regen_metrics_plot$species) %>% 
+  select(plot,species=Species,abundance) %>% 
+  mutate(presence=if_else(is.na(abundance),"absent","present")) %>% 
+  left_join(metric3d_all %>% 
+              filter(time==12,subplot=="plot",slice_num==1) %>% 
+              select(plot,rb_mean,rb_cv,occupied_gf)) %>% 
+  mutate(log_rb_mean = log(rb_mean)) %>%
+  filter(is.finite(log_rb_mean))
+
+regen_metrics_plot$all %>% select(plot) %>% unique() %>% 
+  expand_grid(Species=unique(regen_metrics_plot$species$Species)) %>% 
+  filter(Species!="NA") %>% 
+  left_join(regen_metrics_plot$species) %>% 
+  select(plot,species=Species,abundance) %>% 
+  mutate(presence=if_else(is.na(abundance),"absent","present")) %>% 
+  left_join(metric3d_all %>% 
+              filter(time==12,subplot=="plot",slice_num==1) %>% 
+              select(plot,rb_mean,rb_cv,occupied_gf)) %>% 
+  ggplot(aes(species,log(rb_mean),color=presence))+
+  geom_boxplot(outlier.colour = NA)+
+  geom_jitter()+
+  ylim(c(5.5,9))
+  
+  
+library(lme4); library(lmerTest)
+
+species_list <- df %>%
+  group_by(species) %>%
+  filter(n_distinct(presence) == 2, n_distinct(plot) >= 3) %>%
+  pull(species) %>% unique()
+
+results <- lapply(species_list, function(sp) {
+  d <- df[df$species == sp, ]
+  tryCatch({
+    m  <- lm(log_rb_mean ~ presence , data = d)
+    co <- summary(m)$coefficients["presencepresent", ]
+    data.frame(species = sp,
+               estimate  = co["Estimate"],
+               std.error = co["Std. Error"],
+               statistic = co["t value"],
+               p.value   = co["Pr(>|t|)"])
+  }, error = function(e)
+    data.frame(species = sp, estimate = NA, std.error = NA,
+               statistic = NA, p.value = NA))
+})
+
+res <- do.call(rbind, results)
+res$p.adj <- p.adjust(res$p.value, method = "BH")
+res
+
+
+
+
+df$rb_c <- df$log_rb_mean - mean(df$log_rb_mean, na.rm = TRUE)   # centred predictor
+df$species <- factor(df$species)
+
+library(glmmTMB)
+
+mnb <- glmmTMB(abundance ~ species * rb_c + (1 | plot),
+               data = df, family = nbinom2)
+
+# if there are more zeros than even NB expects (common), add a zero-inflation part:
+mzi <- glmmTMB(abundance ~ species * rb_c + (1 | plot),
+               ziformula = ~1, data = df, family = nbinom2)
+
+AIC(mnb, mzi)  
+
+
+library(emmeans)
+
+et <- emtrends(mnb, ~ species, var = "rb_c")   # or mp / mzi
+et                                             # per-species slope on log scale
+
+# as rate ratios (abundance multiplies by this per 1-unit rb_mean):
+summary(et, infer = TRUE) |>
+  transform(RR = exp(rb_c.trend))
+```
+

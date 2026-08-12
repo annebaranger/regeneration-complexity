@@ -142,26 +142,21 @@ get_rb<-function(dart_folder,
     )
     
     nc <- nc_open(path_ncdf)
-    
-    list_rb[[i]] <- ncvar_get(nc, "3D/All/ITERX/Band_0/Total_Entry")
-    
+    arr <- ncvar_get(nc, "3D/All/ITERX/Band_0/Total_Entry")
     nc_close(nc)
+    
+    y_idx <- seq_len(dim(arr)[1])
+    list_rb[[i]] <- arr[rev(y_idx), , , drop = FALSE]
   }
-  arr4d <- simplify2array(list_rb)
-  dims=dim(arr4d)
-  
-  y_idx <- seq_len(dim(arr4d)[1])
-  arr4d_flipped <- arr4d[rev(y_idx), , ,]
-  
-  
-  # sum_arr <- apply(arr4d_flipped, c(1, 2, 3), sum)
-  # sd_arr <- apply(arr4d_flipped, c(1, 2, 3), sd)
+
   
   path_rb=paste0("output/",plot_name,"_rb_raw.rdata")
   save(list_rb,file=path_rb)
   
   return(path_rb)
 }
+
+
 
 normalize_rb<-function(plot_name,
                        user,
@@ -236,6 +231,57 @@ normalize_rb<-function(plot_name,
   save(list_rb,file=path_rast_norm)
   return(path_rast_norm)
 }
+
+
+#### PLANT AREA DENSITY ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+get_pad<-function(user,
+                  path_plot,
+                  plot_name){
+  vox_path=file.path(path_plot,paste0(plot_name,"-processing"),"vox_merge.txt")
+  vox_df <- read_table(
+    vox_path,
+    col_names = TRUE
+  )
+  names(vox_df) <- gsub('"', '', names(vox_df))
+  
+  ### transform into array
+  x_vals <- sort(unique(vox_df$x))
+  y_vals <- sort(unique(vox_df$y))
+  z_vals <- sort(unique(vox_df$z))
+  
+  # Get all indices at once (vectorised)
+  ix <- match(vox_df$x, x_vals)
+  iy <- match(vox_df$y, y_vals)
+  iy_flipped <- length(y_vals) + 1 - iy
+  iz <- match(vox_df$z, z_vals)
+  
+  # Create empty array
+  arr <- array(
+    NA_real_,
+    dim = c(length(y_vals), length(x_vals), length(z_vals)),
+    # dimnames = list( y = y_vals, x = x_vals, z = z_vals)
+  )
+  
+  # Fill in one shot using a matrix of indices
+  arr[cbind(iy_flipped, ix, iz)] <- vox_df$pad_transmittance
+  
+  ### normalize
+  arr_norm <- apply(arr, c(1, 2), function(col) {
+    first_valid <- which(!is.na(col))[1]
+    if (is.na(first_valid)) return(rep(NA_real_, length(col)))  # all NA column
+    new_col <- col[first_valid:length(col)]
+    c(new_col, rep(NA_real_, length(col) - length(new_col)))    # pad end with NA
+  })
+  arr_norm <- aperm(arr_norm, c(2, 3, 1))
+  
+  path_vox=paste0("output/",plot_name,"_voxnorm.rdata")
+  save(arr_norm,file=path_vox)
+  return(path_vox)
+}
+
+
 
 #### POINT CLOUD ####
 #%%%%%%%%%%%%%%%%%%%%
@@ -329,174 +375,664 @@ get_pc_norm_clean<-function(plot_name,
   return(path_las)
 }
 
+get_gap_filling<-function(pc,voxel_size=0.25){
+  pc_vox=voxelize_points(pc,res=0.25)
+  occupied_voxels <- nrow(pc_vox)
+  
+  xrange <- range(pc@data$X)
+  yrange <- range(pc@data$Y)
+  zrange <- range(pc@data$Z)
+  
+  nx <- ceiling(diff(xrange) / voxel_size)
+  ny <- ceiling(diff(yrange) / voxel_size)
+  nz <- ceiling(diff(zrange) / voxel_size)
+  
+  total_voxels <- nx * ny * nz
+  empty_voxels <- total_voxels - occupied_voxels
+  
+  empty_prop <- empty_voxels / total_voxels
+  occupied_prop <- occupied_voxels / total_voxels
+  return(list(empty=empty_prop,occupied=occupied_prop))
 
+}
+
+
+get_gini<-function(x){
+  x <- x[is.finite(x)]
+  if (length(x) == 0) return(NA_real_)
+  if (all(x == 0)) return(0)
+  x <- sort(x)
+  n <- length(x)
+  (2 * sum(seq_len(n) * x)) / (n * sum(x)) - (n + 1) / n
+}
 # pc_norm=tar_read(pc_norm_GER13)
 # rb_norm=tar_read(rb_norm_GER13)
+# voxnorm=tar_read(voxnorm_GER13)
 # bbox=tar_read(bbox_GER13)
 # subplot_extent=tar_read(subplot_extent_GER13)
 # plot_name="GER13"
 # nstrat=4
-get_complexity_rb<-function(pc_norm,
-                            rb_norm,
-                            bbox,
-                            subplot_extent,
-                            plot_name,
-                            nstrat=4){
+
+
+# Compute every per-slice metric from the already-prepared rasters.
+# `chm`      : canopy height raster (layer named "Z"), NA-excluded stats
+# `chm_num`  : same but NA -> 0
+# `rb`       : resampled, quantile-filtered relative-brightness raster (named "rb")
+# `rb_mask`  : rb masked by chm
+# `pad`      : resampled plant-area-density raster
+# `pc_gap`   : point cloud (slice or clipped slice) for gap filling
+.slice_metrics <- function(chm, chm_num, rb, rb_mask, pad, pad_cube,
+                           pc_gap, slice_up,
+                           voxel_size = 0.25, min_pts_lm = 3) {
   
-  pc_norm<-loadRData(pc_norm)
-  list_rb<-loadRData(rb_norm)
+  v_chm <- values(chm)
+  h_mean_na <- mean(v_chm, na.rm = TRUE)
+  h_med_na  <- median(v_chm, na.rm = TRUE)
+  h_sd_na   <- sd(v_chm, na.rm = TRUE)
   
-  slice_list = seq(from = 0.5, by = 1, length.out = nstrat+1)
-  summary_plot=data.frame(plot=character(),
-                          subplot=character(),
-                          time=numeric(),
-                          slice_num=numeric(),
-                          slice_low=numeric(),
-                          slice_up=numeric(),
-                          h_mean_na=numeric(),
-                          h_med_na=numeric(),
-                          h_sd_na=numeric(),
-                          h_cv_na=numeric(),
-                          h_mean=numeric(),
-                          h_med=numeric(),
-                          h_sd=numeric(),
-                          h_cv=numeric(),
-                          rb_mean=numeric(),
-                          rb_med=numeric(),
-                          rb_sd=numeric(),
-                          rb_cv=numeric(),
-                          rb_mean_mask=numeric(),
-                          rb_med_mask=numeric(),
-                          rb_sd_mask=numeric(),
-                          rb_cv_mask=numeric(),
-                          coef_lin=numeric())
+  v_chm_num <- values(chm_num)
+  h_mean <- mean(v_chm_num, na.rm = TRUE)
+  h_med  <- median(v_chm_num, na.rm = TRUE)
+  h_sd   <- sd(v_chm_num, na.rm = TRUE)
+  
+  v_rb <- values(rb)
+  rb_mean <- mean(v_rb, na.rm = TRUE)
+  rb_med  <- median(v_rb, na.rm = TRUE)
+  rb_sd   <- sd(v_rb, na.rm = TRUE)
+  
+  v_rbm <- values(rb_mask)
+  rb_mean_mask <- mean(v_rbm, na.rm = TRUE)
+  rb_med_mask  <- median(v_rbm, na.rm = TRUE)
+  rb_sd_mask   <- sd(v_rbm, na.rm = TRUE)
+  
+  # linear trend rb ~ Z over vegetated pixels below the slice top
+  df <- as.data.frame(c(chm, rb), xy = TRUE, na.rm = TRUE) %>%
+    filter(Z < (slice_up - 0.01))
+  coef <- if (nrow(df) > min_pts_lm) {
+    lm(rb ~ Z, data = df)$coefficients[["Z"]]
+  } else {
+    NA_real_
+  }
+  
+  gf <- get_gap_filling(pc_gap, voxel_size = voxel_size)
+  
+  v_pad <- values(pad)
+  pad_tot  <- sum(v_pad, na.rm = TRUE)
+  pad_mean <- mean(v_pad, na.rm = TRUE)
+  pad_sd   <- sd(v_pad, na.rm = TRUE)
+  
+  profile <- as.vector(global(pad_cube, "sum", na.rm = TRUE)[, 1])
+  fhd     <- .fhd(profile)
   
   
-  for(t in seq_along(list_rb)){
-    rb_norm=list_rb[[t]]
-    time=as.numeric(names(list_rb)[t])
+  ri_na <- rumple_index(chm)
+  ri <- rumple_index(chm_num)
+  
+  list(
+    h_mean_na = h_mean_na, h_med_na = h_med_na, h_sd_na = h_sd_na,
+    h_cv_na = h_sd_na / h_mean_na,
+    h_mean = h_mean, h_med = h_med, h_sd = h_sd, h_cv = h_sd / h_mean,
+    empty = gf$empty, occupied = gf$occupied,
+    rb_mean = rb_mean, rb_med = rb_med, rb_sd = rb_sd, rb_cv = rb_sd / rb_mean,
+    rb_mean_mask = rb_mean_mask, rb_med_mask = rb_med_mask, rb_sd_mask = rb_sd_mask,
+    rb_cv_mask = rb_sd_mask / rb_mean_mask,
+    coef = coef,
+    pad_tot = pad_tot, pad_mean = pad_mean, pad_sd = pad_sd,
+    pad_cv = pad_sd / pad_mean,
+    ri=ri,
+    ri_na=ri_na,
+    fhd=fhd
+  )
+}
+
+# Assemble one output row in the exact column order of the original data frame.
+.make_row <- function(plot_name, subplot, time, slice_num, slice_low, slice_up, m) {
+  data.frame(
+    plot = plot_name, subplot = subplot, time = time,
+    slice_num = slice_num, slice_low = slice_low, slice_up = slice_up,
+    h_mean_na = m$h_mean_na, h_med_na = m$h_med_na, h_sd_na = m$h_sd_na, h_cv_na = m$h_cv_na,
+    h_mean = m$h_mean, h_med = m$h_med, h_sd = m$h_sd, h_cv = m$h_cv,
+    empty_gf = m$empty, occupied_gf = m$occupied,
+    rb_mean = m$rb_mean, rb_med = m$rb_med, rb_sd = m$rb_sd, rb_cv = m$rb_cv,
+    rb_mean_mask = m$rb_mean_mask, rb_med_mask = m$rb_med_mask,
+    rb_sd_mask = m$rb_sd_mask, rb_cv_mask = m$rb_cv_mask,
+    coef_lin = m$coef,
+    pad_tot = m$pad_tot, pad_mean = m$pad_mean, pad_sd = m$pad_sd, pad_cv = m$pad_cv,
+    ri=m$ri,ri_na=m$ri_na,fhd=m$fhd,
+    stringsAsFactors = FALSE
+  )
+}
+
+
+
+# Shannon diversity of a vertical PAD profile.
+#   profile : numeric vector, one value per height layer
+# Zero / non-finite layers are dropped (0*log(0) is NaN, log(0) is -Inf).
+# Returns NA if fewer than 2 occupied layers, where FHD is undefined/degenerate.
+.fhd <- function(profile) {
+  p <- profile[is.finite(profile) & profile > 0]
+  if (length(p) < 2L) return(NA_real_)
+  p <- p / sum(p)
+  -sum(p * log(p))
+}
+
+
+
+get_complexity <- function(pc_norm,
+                           rb_norm,
+                           voxnorm,
+                           bbox,
+                           subplot_extent,
+                           plot_name,
+                           sliced    = TRUE,   # TRUE = strata, FALSE = single band
+                           nstrat    = 4,      # used only when sliced = TRUE
+                           slice_low = 0,      # used only when sliced = FALSE
+                           slice_up  = 4) {    # used only when sliced = FALSE
+  
+  pc_norm <- loadRData(pc_norm)
+  list_rb <- loadRData(rb_norm)
+  voxpad  <- loadRData(voxnorm)
+  
+  # --- define the height bands to process (the only thing the toggle changes) ---
+  if (sliced) {
+    edges  <- seq(from = 0.5, by = 1, length.out = nstrat + 1)
+    slices <- data.frame(low = edges[-(nstrat + 1)],
+                         up  = edges[-1],
+                         num = seq_len(nstrat))
+  } else {
+    slices <- data.frame(low = slice_low, up = slice_up, num = 0)
+  }
+  
+  # subplot geometries are constant -> compute once
+  sub_geo <- lapply(subplot_extent, function(pe) {
+    shift(vect(pe), dx = -bbox$xmin, dy = -bbox$ymin)
+  })
+  
+  n_rows <- length(list_rb) * nrow(slices) * (1L + length(subplot_extent))
+  rows <- vector("list", n_rows)
+  k <- 0L
+  
+  for (t in seq_along(list_rb)) {
+    rb_arr <- list_rb[[t]]
+    time   <- as.numeric(names(list_rb)[t])
     
-    for(i in 1:nstrat){
-      slice_low=slice_list[i]
-      slice_up=slice_list[i+1]
+    for (s in seq_len(nrow(slices))) {
+      s_low <- slices$low[s]
+      s_up  <- slices$up[s]
+      s_num <- slices$num[s]
+      z_idx <- (s_low / 0.25):(s_up / 0.25)
       
-      ### metric at the plot scale for height
-      pc_slice=filter_poi(pc_norm, Z >= slice_low & Z < slice_up)
-      pc_slice_chm <- rasterize_canopy(pc_slice, res = 0.1, algorithm = p2r())
-      pc_slice_chm[pc_slice_chm > (slice_up-0.01)] <- NA
+      ## ---- height CHM ----
+      pc_slice <- filter_poi(pc_norm, Z >= s_low & Z < s_up)
+      chm <- rasterize_canopy(pc_slice, res = 0.1, algorithm = p2r())
+      chm[chm > (s_up - 0.01)] <- NA
       
-      # excluding zone without vegetation
-      h_mean_na=mean(values(pc_slice_chm),na.rm=TRUE)
-      h_med_na=median(values(pc_slice_chm),na.rm=TRUE)
-      h_sd_na=sd(values(pc_slice_chm),na.rm=TRUE)
-      h_cv_na=h_sd_na/h_mean_na
+      chm_num <- chm
+      chm_num[is.na(chm_num)] <- 0
       
-      # accounting for empty space
-      pc_slice_chm_num=pc_slice_chm
-      pc_slice_chm_num[is.na(pc_slice_chm_num)] <- 0
-      
-      h_mean=mean(values(pc_slice_chm_num),na.rm=TRUE)
-      h_med=median(values(pc_slice_chm_num),na.rm=TRUE)
-      h_sd=sd(values(pc_slice_chm_num),na.rm=TRUE)
-      h_cv=h_sd/h_mean
-      
-      ### metric at the plot scale for light
-      rb_slice=rast(apply(rb_norm[,,(slice_low/0.25):(slice_up/0.25)], c(1, 2), sum))
-      ext(rb_slice)  <- ext(pc_slice_chm)
-      crs(rb_slice)  <- crs(pc_slice_chm)
-      rb_slice_matched <- resample(rb_slice, pc_slice_chm, method = "bilinear")
-      names(rb_slice_matched)="rb"
-      rb_slice_matched[rb_slice_matched<quantile(values(rb_slice_matched),
-                                                 na.rm=TRUE,probs=0.005)] <-NA
-      rb_slice_matched_mask = mask(rb_slice_matched,pc_slice_chm)
+      ## ---- relative brightness ----
+      rb_slice <- rast(rowSums(rb_arr[, , z_idx, drop = FALSE], dims = 2))
+      ext(rb_slice) <- ext(chm)
+      crs(rb_slice) <- crs(chm)
+      rb_matched <- resample(rb_slice, chm, method = "bilinear")
+      names(rb_matched) <- "rb"
+      thr <- quantile(values(rb_matched), na.rm = TRUE, probs = 0.005)
+      rb_matched[rb_matched < thr] <- NA
+      rb_matched_mask <- mask(rb_matched, chm)
       
       
-      rb_mean=mean(values(rb_slice_matched),na.rm=TRUE)
-      rb_med=median(values(rb_slice_matched),na.rm=TRUE)
-      rb_sd=sd(values(rb_slice_matched),na.rm=TRUE)
-      rb_cv=rb_sd/rb_mean
-      rb_mean_mask=mean(values(rb_slice_matched_mask),na.rm=TRUE)
-      rb_med_mask=median(values(rb_slice_matched_mask),na.rm=TRUE)
-      rb_sd_mask=sd(values(rb_slice_matched_mask),na.rm=TRUE)
-      rb_cv_mask=rb_sd_mask/rb_mean_mask
+      ## ---- plant area density ----
+      pad_slice <- rast(rowSums(voxpad[, , z_idx, drop = FALSE], dims = 2))
+      ext(pad_slice) <- ext(chm)
+      crs(pad_slice) <- crs(chm)
+      pad_matched <- resample(pad_slice, chm, method = "bilinear")
+      names(pad_matched) <- "pad_sum"
       
-      df=as.data.frame(c(pc_slice_chm,
-                         rb_slice_matched),xy=TRUE,
-                       na.rm=TRUE) %>% 
-        filter(Z<(slice_up-0.01))
-      reglin=lm(rb~Z,data=df)
-      coef = reglin$coefficients["Z"][[1]]
+      pad_cube <- rast(voxpad[, , z_idx, drop = FALSE])
+      ext(pad_cube) <- ext(chm)
+      crs(pad_cube) <- crs(chm)
+      pad_cube_matched <- resample(pad_cube, chm, method = "bilinear")
       
       
-      summary_plot[nrow(summary_plot) + 1, ] <- list(
-        plot_name, "plot",time,i, slice_low, slice_up,
-        h_mean_na, h_med_na, h_sd_na, h_cv_na,
-        h_mean, h_med, h_sd, h_cv,
-        rb_mean, rb_med, rb_sd, rb_cv,
-        rb_mean_mask, rb_med_mask, rb_sd_mask, rb_cv_mask,
-        coef
-      )
+      ## ---- plot-scale metrics ----
+      m <- .slice_metrics(chm, chm_num, rb_matched, rb_matched_mask,
+                          pad_matched, pad_cube, pc_slice, s_up)
+      k <- k + 1L
+      rows[[k]] <- .make_row(plot_name, "plot", time, s_num, s_low, s_up, m)
       
-      ### do the same for subplots
-      for(sp in seq_along(subplot_extent)){
-        plot_ext=subplot_extent[[sp]]
-        plot_ext_trans <- shift(vect(plot_ext), 
-                                dx = -bbox$xmin, 
-                                dy = -bbox$ymin)
-        pc_sub_slice_chm=crop(pc_slice_chm,plot_ext_trans)
-        pc_sub_slice_chm_num=crop(pc_slice_chm_num,plot_ext_trans)
-        rb_sub_slice_matched=crop(rb_slice_matched,plot_ext_trans)
-        rb_sub_slice_matched_mask=crop(rb_slice_matched_mask,plot_ext_trans)
+      ## ---- subplot-scale metrics ----
+      for (sp in seq_along(subplot_extent)) {
+        geo    <- sub_geo[[sp]]
+        chm_s  <- crop(chm,             geo)
+        chmn_s <- crop(chm_num,         geo)
+        rb_s   <- crop(rb_matched,      geo)
+        rbm_s  <- crop(rb_matched_mask, geo)
+        pad_s  <- crop(pad_matched,     geo)
+        cube_s <- crop(pad_cube_matched, geo)
+        pc_s   <- clip_roi(pc_slice, sf::st_as_sf(geo))
         
-        ### height metrics
-        h_mean_s_na=mean(values(pc_sub_slice_chm),na.rm=TRUE)
-        h_med_s_na=median(values(pc_sub_slice_chm),na.rm=TRUE)
-        h_sd_s_na=sd(values(pc_sub_slice_chm),na.rm=TRUE)
-        h_cv_s_na=h_sd_s_na/h_mean_s_na
-        
-        ### height metrics, na set as 0
-        h_mean_s=mean(values(pc_sub_slice_chm_num),na.rm=TRUE)
-        h_med_s=median(values(pc_sub_slice_chm_num),na.rm=TRUE)
-        h_sd_s=sd(values(pc_sub_slice_chm_num),na.rm=TRUE)
-        h_cv_s=h_sd_s/h_mean_s
-        
-        ### rb metrics 
-        rb_mean_s=mean(values(rb_sub_slice_matched),na.rm=TRUE)
-        rb_med_s=median(values(rb_sub_slice_matched),na.rm=TRUE)
-        rb_sd_s=sd(values(rb_sub_slice_matched),na.rm=TRUE)
-        rb_cv_s=rb_sd_s/rb_mean_s
-        
-        ### rb metrics masked
-        rb_mean_mask_s=mean(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-        rb_med_mask_s=median(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-        rb_sd_mask_s=sd(values(rb_sub_slice_matched_mask),na.rm=TRUE)
-        rb_cv_mask_s=rb_sd_mask_s/rb_mean_mask_s
-        
-        names(rb_sub_slice_matched)="rb"
-        df_s=as.data.frame(c(pc_sub_slice_chm,
-                             rb_sub_slice_matched),xy=TRUE,
-                           na.rm=TRUE) %>% 
-          filter(Z<(slice_up-0.01))
-        if(dim(df_s)[1]>3){
-          reglin_s=lm(rb~Z,data=df_s)
-          coef_s = reglin_s$coefficients["Z"][[1]]
-        }else{coef_s=NA}
-        
-        
-        
-        summary_plot[nrow(summary_plot) + 1, ] <- list(
-          plot_name, names(subplot_extent[sp]),time, i, slice_low, slice_up,
-          h_mean_s_na, h_med_s_na, h_sd_s_na, h_cv_s_na,
-          h_mean_s, h_med_s, h_sd_s, h_cv_s,
-          rb_mean_s, rb_med_s, rb_sd_s, rb_cv_s,
-          rb_mean_mask_s, rb_med_mask_s, rb_sd_mask_s, rb_cv_mask_s,
-          coef_s
-        )
+        m_s <- .slice_metrics(chm_s, chmn_s, rb_s, rbm_s, pad_s, cube_s,
+                              pc_s, s_up)
+        k <- k + 1L
+        rows[[k]] <- .make_row(plot_name, names(subplot_extent[sp]),
+                               time, s_num, s_low, s_up, m_s)
       }
     }
   }
-  return(summary_plot)
+  
+  dplyr::bind_rows(rows)
 }
+
+
+#' # get extinction characteristics
+#' #' @param plot_name plot name
+#' #' @param targets characteristic height to compute
+#' get_Hext<-function(rb_norm,
+#'                    pc_norm,
+#'                    subplot_extent,
+#'                    bbox,
+#'                    plot_name,
+#'                    targets=c(0.5,0.88)){
+#'   list_rb<-loadRData(rb_norm)         # load radiative budget
+#'   pc_norm<-loadRData(pc_norm)
+#'   
+#'   summary_height=data.frame(plot=character(),
+#'                             subplot=character(),
+#'                             time=numeric(),
+#'                             extinction=numeric(),
+#'                             mean=numeric(),
+#'                             sd=numeric(),
+#'                             mean_slope=numeric(),
+#'                             sd_slope=numeric())
+#'   
+#'   
+#'   for(t in seq_along(list_rb)){      # loop over simulation time
+#'     rb_norm=list_rb[[t]]
+#'     time=as.numeric(names(list_rb)[t])
+#'     
+#'     
+#'     prof <- reshape2::melt(rb_norm, 
+#'                            varnames = c("i", "j", "z"), 
+#'                            value.name = "value") %>%
+#'       group_by(i, j) %>%
+#'       mutate(extinction = 1 - value / max(value),
+#'              z   = z * 0.25)
+#'     
+#'     # z prédit pour chaque cible de ext, par courbe (i,j)
+#'     half <- prof %>%
+#'       group_modify(~{
+#'         m   <- mgcv::gam(z ~ s(extinction, k = 5), data = .x)
+#'         eps <- 1e-2
+#'         z_pred <- as.numeric(predict(m, newdata = tibble(extinction = targets)))
+#'         z_hi   <- as.numeric(predict(m, newdata = tibble(extinction = targets + eps)))
+#'         z_lo   <- as.numeric(predict(m, newdata = tibble(extinction = targets - eps)))
+#'         tibble(extinction = targets,
+#'                z_pred = z_pred,
+#'                slope  = (z_hi - z_lo) / (2 * eps))   # dz/d(extinction)
+#'       }) %>%
+#'       ungroup()
+#'     
+#'     summary_height <- summary_height %>%
+#'       bind_rows(half %>%
+#'                   group_by(extinction) %>%
+#'                   summarise(mean       = mean(z_pred),
+#'                             sd         = sd(z_pred),
+#'                             mean_slope = mean(slope),
+#'                             sd_slope   = sd(slope),
+#'                             .groups = "drop") %>%
+#'                   mutate(time = time, plot = plot_name,subplot="plot"))
+#'     
+#'     # get a raster 
+#'     wide <- half %>%
+#'       pivot_wider(id_cols = c(i, j),
+#'                   names_from  = extinction,
+#'                   values_from = c(z_pred, slope))
+#'     
+#'     stk <- terra::rast(wide, type = "xyz")
+#'     names(stk) 
+#'     
+#'     # prepare reference raster
+#'     pc_chm <- rasterize_canopy(pc_norm, res = 0.15, algorithm = p2r())
+#'     ext(stk)  <- ext(pc_chm)
+#'     crs(stk)  <- crs(pc_chm)
+#'     stk_matched <- resample(stk, pc_chm, method = "bilinear")
+#'     
+#'     for(sp in seq_along(subplot_extent)){
+#'       plot_ext=subplot_extent[[sp]]
+#'       plot_ext_trans <- shift(vect(plot_ext), 
+#'                               dx = -bbox$xmin, 
+#'                               dy = -bbox$ymin)
+#'       
+#'       stk_sub=crop(stk_matched,plot_ext_trans)
+#'       
+#'       
+#'       summary_height <- summary_height %>%
+#'         bind_rows(as.data.frame(stk_sub,xy=TRUE) %>% 
+#'                     pivot_longer(
+#'                       cols = -c(x, y),
+#'                       names_to  = c(".value", "extinction"),
+#'                       names_sep = "_(?=[0-9])"          # split at the underscore before the number
+#'                     ) %>% 
+#'                     group_by(extinction) %>%
+#'                     summarise(mean       = mean(z_pred),
+#'                               sd         = sd(z_pred),
+#'                               mean_slope = mean(slope),
+#'                               sd_slope   = sd(slope),
+#'                               .groups = "drop") %>%
+#'                     mutate(extinction=as.numeric(extinction),
+#'                            time = time,
+#'                            plot = plot_name,
+#'                            subplot=names(subplot_extent[sp])))
+#'       
+#'     }
+#'   }
+#'   return(summary_height)
+#' }
+
+
+## linear interpolation of a profile at arbitrary heights
+.interp <- function(z, v, zout) stats::approx(z, v, xout = zout, rule = 2)$y
+
+## height at which an extinction profile first reaches `target`, coming down
+## from the top of the canopy. `z` must increase with the index.
+.z_at_target <- function(z, e, target) {
+  k <- which(e >= target)
+  if (!length(k)&e[1]>=target) return(NA_real_)
+  if (!length(k)&e[1]<target) return(0)
+  k <- max(k)                                   # highest voxel still >= target
+  if (k == length(e)) return(z[k])              # target reached at the very top
+  z[k] + (target - e[k]) * (z[k + 1] - z[k]) / (e[k + 1] - e[k])
+}
+
+## all the metrics of ONE vertical profile (a column, or an aggregated unit)
+.profile_metrics <- function(z, e, rb, targets, z_ref, dz, smooth = FALSE) {
+  
+  ok <- is.finite(e)
+  if (sum(ok) < 5) return(NULL)
+  zo <- z[ok]; eo <- e[ok]
+  
+  f <- if (smooth) {
+    fit <- try(mgcv::gam(e ~ s(z, k = 5), data = data.frame(z = zo, e = eo)),
+               silent = TRUE)
+    if (inherits(fit, "try-error")) function(x) .interp(zo, eo, x)
+    else function(x) as.numeric(predict(fit, newdata = data.frame(z = x)))
+  } else {
+    function(x) .interp(zo, eo, x)
+  }
+  
+  ## central finite difference -> d(extinction)/dz, in m-1 (negative)
+  slope <- function(z0) {
+    if(z0!=0) {
+      (f(z0 + dz) - f(z0 - dz)) / (2 * dz)
+      } else (f(2*dz) - f(dz)) / dz
+  } 
+  
+  zc <- vapply(targets, function(tg) .z_at_target(zo, eo, tg), numeric(1))
+  
+  tibble(
+    target      = targets,
+    z_cross     = zc,
+    slope_cross = vapply(zc, function(x) if (is.na(x)) NA_real_ else slope(x),
+                         numeric(1)),
+    ext_ref     = .interp(zo, eo, z_ref),       # raw value, never smoothed
+    slope_ref   = slope(z_ref),
+    rb_ref      = .interp(z, rb, z_ref)
+  )
+}
+
+## PAD metrics of ONE vertical PAI profile
+.pad_metrics <- function(z_top, pai, z_ref, voxel_size) {
+  pai <- ifelse(is.na(pai), 0, pai)
+  tot <- sum(pai)
+  w   <- pmin(pmax((z_top - z_ref) / voxel_size, 0), 1)   # fraction above z_ref
+  z50 <- NA_real_
+  if (tot > 0) {
+    cs   <- cumsum(pai)
+    k    <- which(cs >= 0.5 * tot)[1]
+    prev <- if (k == 1L) 0 else cs[k - 1L]
+    z50  <- (z_top[k] - voxel_size) + (0.5 * tot - prev) / pai[k] * voxel_size
+  }
+  c(padAbove = sum(pai * w), padTot = tot, zPAD50 = z50)
+}
+
+## sum an [i, j, k] array over a set of columns -> one 1-D profile
+.profile_sum <- function(arr, ij) {
+  m <- cbind(ij$i, ij$j)
+  vapply(seq_len(dim(arr)[3]),
+         function(k) sum(arr[cbind(m, k)], na.rm = TRUE), numeric(1))
+}
+
+## mean / sd of a set of columns, for every unit
+.summarise_columns <- function(d, vars, groups) {
+  d %>%
+    group_by(across(all_of(groups))) %>%
+    summarise(across(all_of(vars),
+                     list(mean = ~mean(.x, na.rm = TRUE),
+                          sd   = ~sd(.x,   na.rm = TRUE)),
+                     .names = "{.col}_{.fn}"),
+              n_col = n(), .groups = "drop") %>%
+    .add_cv()
+}
+
+.add_cv <- function(d) {
+  vars <- sub("_mean$", "", grep("_mean$", names(d), value = TRUE))
+  for (v in vars) d[[paste0(v, "_cv")]] <- d[[paste0(v, "_sd")]] / d[[paste0(v, "_mean")]]
+  d
+}
+
+## turn an (i, j, ...) table back into a georeferenced raster stack
+.ij_rast <- function(d, tmpl) {
+  ni <- nrow(tmpl); nj <- ncol(tmpl)
+  vars <- setdiff(names(d), c("i", "j"))
+  out <- lapply(vars, function(v) {
+    m <- matrix(NA_real_, ni, nj)
+    m[cbind(d$i, d$j)] <- d[[v]]
+    terra::setValues(tmpl, as.vector(t(m[ni:1, , drop = FALSE])))  # row 1 = north
+  })
+  out <- terra::rast(out)
+  names(out) <- vars
+  out
+}
+
+
+#' Extinction and PAD characteristics of a plot and its subplots
+#'
+#' @param rb_norm path to the voxelised, height-normalised radiative budget
+#'   (a named list of (i, j, z) arrays, names = simulation time)
+#' @param pc_norm path to the height-normalised point cloud (used only for the
+#'   extent / crs of the voxel grid)
+#' @param voxnorm path to the voxelised, height-normalised PAD array (i, j, z),
+#'   same horizontal grid as rb_norm
+#' @param subplot_extent named list of subplot polygons (sf / SpatVector), in
+#'   the original coordinate system
+#' @param bbox bounding box used to normalise the point cloud (list with
+#'   $xmin, $ymin)
+#' @param plot_name plot name
+#' @param targets characteristic extinction levels at which the height of the
+#'   profile is computed
+#' @param z_ref reference height (m) at which extinction, its vertical slope and
+#'   the PAD above are evaluated
+#' @param voxel_size vertical voxel size (m); also the finite-difference step
+#' @param pad_unit "density" if voxnorm stores PAD in m2/m3 (values are
+#'   multiplied by voxel_size to get a plant area index), "index" if each voxel
+#'   already holds m2/m2
+#' @param smooth_columns fit a gam(extinction ~ s(z, k = 5)) before taking the
+#'   per-column slopes (your original behaviour). Costs one gam per column and
+#'   per time step; set to FALSE for raw finite differences.
+#' @param touches passed to terra::extract(): TRUE also keeps the cells merely
+#'   touched by a subplot polygon, FALSE (default) keeps only those whose
+#'   centre falls inside
+#' @param return_rasters also return the per-column metrics as raster stacks
+#'
+#' @return a tibble with one row per (subplot, time, target), or a list if
+#'   return_rasters = TRUE
+get_Hext <- function(rb_norm,
+                     pc_norm,
+                     voxnorm,
+                     subplot_extent,
+                     bbox,
+                     plot_name,
+                     targets        = c(0.5, 0.9),
+                     z_ref          = 4.5,
+                     voxel_size     = 0.25,
+                     pad_unit       = c("density", "index"),
+                     smooth_columns = TRUE,
+                     touches        = FALSE,
+                     return_rasters = FALSE) {
+  
+  list_rb <- loadRData(rb_norm)
+  pc      <- loadRData(pc_norm)
+  voxpad  <- loadRData(voxnorm)
+  
+  if (!identical(dim(voxpad)[1:2], dim(list_rb[[1]])[1:2])){
+    if(abs(dim(voxpad)[1]-dim(list_rb[[1]])[1])<=2 &
+       abs(dim(voxpad)[2]-dim(list_rb[[1]])[2])<=2){
+      dim_x=min(dim(voxpad)[1],dim(list_rb[[1]])[1])
+      dim_y=min(dim(voxpad)[2],dim(list_rb[[1]])[2])
+      voxpad=voxpad[1:dim_x,1:dim_y,]
+      for(l in seq_along(list_rb)){
+        list_rb[[l]]=list_rb[[l]][1:dim_x,1:dim_y,]
+        }
+    }else{
+      stop("voxpad and rb_norm do not share the same horizontal grid")
+    }
+    }  
+  ni <- dim(voxpad)[1]
+  nj <- dim(voxpad)[2]
+  nz <- dim(voxpad)[3]
+  
+  # -------------------------------------------------------------------
+  # 1. geolocate the voxel grid and find which columns belong to which unit
+  #    (i indexes rows south -> north, j indexes columns west -> east:
+  #     this is the orientation implied by your rast(wide, type = "xyz"))
+  # -------------------------------------------------------------------
+  chm  <- lidR::rasterize_canopy(pc, res = 0.15, algorithm = lidR::p2r())
+  tmpl <- terra::rast(nrows = ni, ncols = nj,
+                      extent = terra::ext(chm), crs = terra::crs(chm))
+  
+  r_ij <- c(terra::setValues(tmpl, rep(ni:1,        each  = nj)),   # i
+            terra::setValues(tmpl, rep(seq_len(nj), times = ni)))   # j
+  names(r_ij) <- c("i", "j")
+  
+  sub_lut <- purrr::imap_dfr(subplot_extent, function(e, nm) {
+    if (inherits(e, "bbox")) e <- sf::st_as_sfc(e)
+    p <- terra::shift(terra::vect(e), dx = -bbox$xmin, dy = -bbox$ymin)
+    v <- terra::extract(r_ij, p, touches = touches)
+    if (!nrow(v)) warning("no voxel column falls inside subplot ", nm)
+    tibble(subplot = nm, i = v$i, j = v$j)
+  }) %>% filter(!is.na(i), !is.na(j))
+  
+  ## the plot itself = every column, handled exactly like a subplot
+  sub_lut <- bind_rows(
+    expand_grid(subplot = "plot", i = seq_len(ni), j = seq_len(nj)),
+    sub_lut
+  )
+  
+  # -------------------------------------------------------------------
+  # 2. PAD metrics (time invariant)
+  # -------------------------------------------------------------------
+  pai   <- voxpad * if (pad_unit == "density") voxel_size else 1
+  z_pad <- seq_len(nz) * voxel_size                       # top of each voxel
+  
+  pad_arr <- apply(pai, 1:2, .pad_metrics,
+                   z_top = z_pad, z_ref = z_ref, voxel_size = voxel_size)
+  
+  pad_col <- tibble(i        = rep(seq_len(ni), times = nj),
+                    j        = rep(seq_len(nj), each  = ni),
+                    padAbove = as.vector(pad_arr["padAbove", , ]),
+                    padTot   = as.vector(pad_arr["padTot",   , ]),
+                    zPAD50   = as.vector(pad_arr["zPAD50",   , ]))
+  
+  ## distribution of the per-column values, per unit
+  pad_sum <- sub_lut %>%
+    left_join(pad_col, by = c("i", "j")) %>%
+    .summarise_columns(vars   = c("padAbove", "padTot", "zPAD50"),
+                       groups = "subplot")
+  
+  ## same metrics on the aggregated profile of each unit
+  pad_agg <- sub_lut %>%
+    group_by(subplot) %>%
+    group_modify(~ tibble::as_tibble_row(
+      .pad_metrics(z_pad, .profile_sum(pai, .x), z_ref, voxel_size))) %>%
+    ungroup() %>%
+    rename_with(~paste0(.x, "_agg"), c(padAbove, padTot, zPAD50))
+  
+  # -------------------------------------------------------------------
+  # 3. light metrics, one pass per simulation time
+  # -------------------------------------------------------------------
+  grid  <- expand_grid(i = seq_len(ni), j = seq_len(nj))
+  l_ras <- list()
+  
+  light <- imap_dfr(list_rb, function(rb, nm) {
+    
+    time   <- as.numeric(nm)
+    nz_rb  <- dim(rb)[3]
+    z_rb   <- seq_len(nz_rb) * voxel_size
+    rb_max <- max(rb, na.rm = TRUE)          # brightest voxel of the scene
+    
+    ## --- per column -------------------------------------------------
+    col_met <- map2_dfr(grid$i, grid$j, function(ii, jj) {
+      rb_prof <- rb[ii, jj, ]
+      if (all(!is.finite(rb_prof))) return(NULL)
+      m <- .profile_metrics(z = z_rb, e = 1 - rb_prof / rb_max, rb = rb_prof,
+                            targets = targets, z_ref = z_ref, dz = voxel_size,
+                            smooth = smooth_columns)
+      if (is.null(m)) return(NULL)
+      mutate(m, i = ii, j = jj, .before = 1)
+    })
+    
+    if (return_rasters)
+      l_ras[[nm]] <<- .ij_rast(
+        col_met %>%
+          pivot_wider(id_cols     = c(i, j),
+                      names_from  = target,
+                      values_from = c(z_cross, slope_cross)) %>%
+          left_join(distinct(col_met, i, j, ext_ref, slope_ref, rb_ref),
+                    by = c("i", "j")),
+        tmpl)
+    
+    col_sum <- sub_lut %>%
+      left_join(col_met, by = c("i", "j"), relationship = "many-to-many") %>%
+      filter(!is.na(target)) %>%
+      .summarise_columns(vars   = c("z_cross", "slope_cross",
+                                    "ext_ref", "slope_ref", "rb_ref"),
+                         groups = c("subplot", "target"))
+    
+    ## --- aggregated profile of each unit ----------------------------
+    agg <- sub_lut %>%
+      group_by(subplot) %>%
+      group_modify(~{
+        rb_prof <- .profile_sum(rb, .x)
+        .profile_metrics(z = z_rb, e = 1 - rb_prof / max(rb_prof, na.rm = TRUE),
+                         rb = rb_prof, targets = targets, z_ref = z_ref,
+                         dz = voxel_size, smooth = FALSE)
+      }) %>%
+      ungroup() %>%
+      rename_with(~paste0(.x, "_agg"),
+                  c(z_cross, slope_cross, ext_ref, slope_ref, rb_ref))
+    
+    col_sum %>%
+      left_join(agg, by = c("subplot", "target")) %>%
+      mutate(time = time, .before = 1)
+  })
+  
+  # -------------------------------------------------------------------
+  # 4. assemble
+  # -------------------------------------------------------------------
+  out <- light %>%
+    left_join(pad_sum %>% select(-n_col), by = "subplot") %>%
+    left_join(pad_agg,                    by = "subplot") %>%
+    mutate(plot = plot_name, .before = 1) %>%
+    arrange(subplot, time, target)
+  
+  if (!return_rasters) return(out)
+  
+  list(summary     = out)#,
+  # pad_rast    = .ij_rast(pad_col, tmpl),
+  # light_rast  = l_ras,
+  # subplot_lut = sub_lut)
+}
+
 
 
 ### REGENERATION METRICS ####
@@ -504,7 +1040,11 @@ get_complexity_rb<-function(pc_norm,
 
 # Get regeneration metrics at the subplot level
 #' @param regen_df table of the data from the field
-get_regen_metric_subplot<-function(regen_df){
+get_regen_metric_subplot<-function(regen_df,shade_df){
+  ### ALL SPECIES TOGETHER 
+  #%%%%%%%%%%%%%%%%%%%%%%%
+  
+  # Abundance & richness
   general_df <- regen_df %>%
     group_by(plot, subplot) %>%
     summarise(
@@ -523,10 +1063,25 @@ get_regen_metric_subplot<-function(regen_df){
     group_by(plot, subplot) %>%
     summarise(
       richness_sd  = sd(richness),
+      abundance_sd = sd(abundance),
       abundance_cv = sd(abundance) / mean(abundance),
       .groups = "drop"
     )
   
+  # Abundance & richness - seedlings and saplings
+  seedling_df <- regen_df %>%
+    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
+    group_by(plot, subplot) %>%
+    summarise(richness_seedling     = n_distinct(Species),
+              n_seedling = sum(Count), .groups = "drop")
+  
+  sapling_df <- regen_df %>%
+    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
+    group_by(plot, subplot) %>%
+    summarise(richness_sapling   = n_distinct(Species),
+              n_sapling = sum(Count), .groups = "drop")
+  
+  # Shannon index total and per size class
   shannon_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
     group_by(plot, subplot, Species) %>%
@@ -538,36 +1093,6 @@ get_regen_metric_subplot<-function(regen_df){
     ) %>%
     summarise(H = -sum(p), .groups = "drop")
   
-  browsing_df <- regen_df %>%
-    filter(Hclass > 1) %>%
-    group_by(plot, subplot) %>%
-    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
-  
-  seedling_df <- regen_df %>%
-    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
-    group_by(plot, subplot) %>%
-    summarise(n_seedling = sum(Count), .groups = "drop")
-  
-  sapling_df <- regen_df %>%
-    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
-    group_by(plot, subplot) %>%
-    summarise(n_sapling = sum(Count), .groups = "drop")
-  
-  growth_df <- regen_df %>%
-    filter(!is.na(Height_increment_1)) %>%
-    mutate(Height_increment = if_else(
-      !is.na(Height_increment_2),
-      (Height_increment_1 + Height_increment_2) / 2,
-      Height_increment_1
-    )) %>%
-    group_by(plot, subplot, Species) %>%
-    summarise(
-      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
-      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
-      .groups = "drop"
-    )
-  
-  # ── Tables at plot/subplot/Hclass level → pivot wide before joining ──────────
   shannon_size_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
     group_by(plot, subplot, Species, Hclass) %>%
@@ -580,7 +1105,124 @@ get_regen_metric_subplot<-function(regen_df){
     summarise(H = -sum(p), .groups = "drop") %>%
     pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
   
+  # Growth rate, total and per size class
+  growth_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, subplot) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
   growth_size_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, subplot, Hclass) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from  = Hclass,
+      values_from = c(Height_increment_mn, Height_increment_cv),
+      names_sep   = "_hclass"
+    )
+  
+  # Height distribution
+  shannon_height_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot, subplot, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, subplot) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H_height = -sum(p), .groups = "drop")
+  
+  # browsing intensity
+  browsing_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot, subplot) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
+  # community wighted mean for shade tolerange
+  shade_tol_df<- regen_df %>%
+    group_by(plot, subplot,Species) %>%
+    summarise(
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>% 
+    left_join(shade_df,by=c("Species"="species")) %>% 
+    group_by(plot,subplot) %>% select(plot,,subplot,Species,abundance,shade_tolerance) %>% 
+    summarise(cwm_shade=sum(abundance*shade_tolerance)/sum(abundance))
+  
+  ### SPECIES SPECIFIC 
+  #%%%%%%%%%%%%%%%%%%%%%%%
+  
+  # Abundance mean and variability
+  
+  general_sp_df <- regen_df %>%
+    group_by(plot, subplot,Species) %>%
+    summarise(
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  var_sp_df <- regen_df %>%
+    group_by(plot, subplot,Species, Quadrat) %>%
+    summarise(
+      abundance = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(plot, subplot,Species) %>%
+    summarise(
+      abundance_sd = sd(abundance),
+      abundance_cv = sd(abundance) / mean(abundance),
+      .groups = "drop"
+    )
+  
+  # Height distribution
+  shannon_height_sp_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot, subplot,Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, subplot,Species) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H_height = -sum(p), .groups = "drop")
+  
+  # Growth rate, total and per size class
+  growth_sp_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, subplot, Species) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
+  growth_sp_size_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
     mutate(Height_increment = if_else(
       !is.na(Height_increment_2),
@@ -599,6 +1241,12 @@ get_regen_metric_subplot<-function(regen_df){
       names_sep   = "_hclass"
     )
   
+  # browsing intensity
+  browsing_sp_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot, subplot, Species) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
   # ── Final join at plot/subplot ────────────────────────────────────────────────
   final_df <- general_df %>%
     left_join(var_df,          by = c("plot", "subplot")) %>%
@@ -607,14 +1255,27 @@ get_regen_metric_subplot<-function(regen_df){
     left_join(seedling_df,     by = c("plot", "subplot")) %>%
     left_join(sapling_df,     by = c("plot", "subplot")) %>%
     left_join(shannon_size_df, by = c("plot", "subplot")) %>%
-    left_join(growth_size_df,  by = c("plot", "subplot"))
-  return(final_df)
+    left_join(growth_df,  by = c("plot", "subplot")) %>% 
+    left_join(growth_size_df,  by = c("plot", "subplot")) %>% 
+    left_join(shannon_height_df, by = c("plot", "subplot"))%>% 
+    left_join(shade_tol_df, by = c("plot", "subplot"))
+  final_sp_df<-general_sp_df %>%
+    left_join(var_sp_df,             by = c("plot", "subplot","Species")) %>%
+    left_join(shannon_height_sp_df,  by = c("plot", "subplot","Species")) %>%
+    left_join(growth_sp_df,          by = c("plot", "subplot","Species")) %>%
+    left_join(growth_sp_size_df,     by = c("plot", "subplot","Species")) %>%
+    left_join(browsing_sp_df,        by = c("plot", "subplot","Species")) 
+  return(list(all=final_df,species=final_sp_df))
 }
 
 # Get regeneration metrics at the plot level
 #' @param regen_df table of the data from the field
 
-get_regen_metric_plot<-function(regen_df){
+get_regen_metric_plot<-function(regen_df,shade_df){
+  ### ALL SPECIES TOGETHER 
+  #%%%%%%%%%%%%%%%%%%%%%%%
+  
+  # Abundance & richness
   general_df <- regen_df %>%
     group_by(plot) %>%
     summarise(
@@ -624,7 +1285,7 @@ get_regen_metric_plot<-function(regen_df){
     )
   
   var_df <- regen_df %>%
-    group_by(plot, subplot) %>%
+    group_by(plot, Quadrat) %>%
     summarise(
       richness  = n_distinct(Species),
       abundance = sum(as.numeric(Count), na.rm = TRUE),
@@ -633,10 +1294,25 @@ get_regen_metric_plot<-function(regen_df){
     group_by(plot) %>%
     summarise(
       richness_sd  = sd(richness),
+      abundance_sd = sd(abundance),
       abundance_cv = sd(abundance) / mean(abundance),
       .groups = "drop"
     )
   
+  # Abundance & richness - seedlings and saplings
+  seedling_df <- regen_df %>%
+    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
+    group_by(plot) %>%
+    summarise(richness_seedling     = n_distinct(Species),
+              n_seedling = sum(Count), .groups = "drop")
+  
+  sapling_df <- regen_df %>%
+    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
+    group_by(plot) %>%
+    summarise(richness_sapling   = n_distinct(Species),
+              n_sapling = sum(Count), .groups = "drop")
+  
+  # Shannon index total and per size class
   shannon_df <- regen_df %>%
     filter(!is.na(as.numeric(Count))) %>%
     group_by(plot, Species) %>%
@@ -648,22 +1324,124 @@ get_regen_metric_plot<-function(regen_df){
     ) %>%
     summarise(H = -sum(p), .groups = "drop")
   
+  shannon_size_df <- regen_df %>%
+    filter(!is.na(as.numeric(Count))) %>%
+    group_by(plot, Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot, Hclass) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H = -sum(p), .groups = "drop") %>%
+    pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
+  
+  # Growth rate, total and per size class
+  growth_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    )
+  
+  growth_size_df <- regen_df %>%
+    filter(!is.na(Height_increment_1)) %>%
+    mutate(Height_increment = if_else(
+      !is.na(Height_increment_2),
+      (Height_increment_1 + Height_increment_2) / 2,
+      Height_increment_1
+    )) %>%
+    group_by(plot, Hclass) %>%
+    summarise(
+      Height_increment_mn = mean(Height_increment, na.rm = TRUE),
+      Height_increment_cv = sd(Height_increment,   na.rm = TRUE) / Height_increment_mn,
+      .groups = "drop"
+    ) %>%
+    pivot_wider(
+      names_from  = Hclass,
+      values_from = c(Height_increment_mn, Height_increment_cv),
+      names_sep   = "_hclass"
+    )
+  
+  # Height distribution
+  shannon_height_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H_height = -sum(p), .groups = "drop")
+  
+  # community wighted mean for shade tolerange
+  shade_tol_df<- regen_df %>%
+    group_by(plot,Species) %>%
+    summarise(
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>% 
+    left_join(shade_df,by=c("Species"="species")) %>% 
+    group_by(plot) %>% select(plot,Species,abundance,shade_tolerance) %>% 
+    summarise(cwm_shade=sum(abundance*shade_tolerance)/sum(abundance))
+  
+  
+  
+  # browsing intensity
   browsing_df <- regen_df %>%
     filter(Hclass > 1) %>%
     group_by(plot) %>%
     summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
   
-  seedling_df <- regen_df %>%
-    filter(!is.na(Species), Hclass %in% c(1, 2)) %>%
-    group_by(plot) %>%
-    summarise(n_seedling = sum(Count), .groups = "drop")
+  ### SPECIES SPECIFIC 
+  #%%%%%%%%%%%%%%%%%%%%%%%
   
-  sapling_df <- regen_df %>%
-    filter(!is.na(Species), !Hclass %in% c(1, 2)) %>%
-    group_by(plot) %>%
-    summarise(n_sapling = sum(Count), .groups = "drop")
+  # Abundance mean and variability
   
-  growth_df <- regen_df %>%
+  general_sp_df <- regen_df %>%
+    group_by(plot,Species) %>%
+    summarise(
+      abundance    = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  var_sp_df <- regen_df %>%
+    group_by(plot,Species, Quadrat) %>%
+    summarise(
+      abundance = sum(as.numeric(Count), na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(plot,Species) %>%
+    summarise(
+      abundance_sd = sd(abundance),
+      abundance_cv = sd(abundance) / mean(abundance),
+      .groups = "drop"
+    )
+  
+  # Height distribution
+  shannon_height_sp_df <-  regen_df %>%
+    filter(!is.na(Hclass)) %>% 
+    mutate(Count=replace_na(Count,0)) %>% 
+    group_by(plot,Species, Hclass) %>%
+    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
+    group_by(plot,Species) %>%
+    mutate(
+      abundance_tot = sum(abundance),
+      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
+    ) %>%
+    summarise(H_height = -sum(p), .groups = "drop")
+  
+  # Growth rate, total and per size class
+  growth_sp_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
     mutate(Height_increment = if_else(
       !is.na(Height_increment_2),
@@ -677,20 +1455,7 @@ get_regen_metric_plot<-function(regen_df){
       .groups = "drop"
     )
   
-  # ── Tables at plot/Hclass level → pivot wide before joining ──────────
-  shannon_size_df <- regen_df %>%
-    filter(!is.na(as.numeric(Count))) %>%
-    group_by(plot, Species, Hclass) %>%
-    summarise(abundance = sum(as.numeric(Count), na.rm = TRUE), .groups = "drop") %>%
-    group_by(plot, Hclass) %>%
-    mutate(
-      abundance_tot = sum(abundance),
-      p = (abundance / abundance_tot) * log(abundance / abundance_tot)
-    ) %>%
-    summarise(H = -sum(p), .groups = "drop") %>%
-    pivot_wider(names_from = Hclass, values_from = H, names_prefix = "H_hclass")
-  
-  growth_size_df <- regen_df %>%
+  growth_sp_size_df <- regen_df %>%
     filter(!is.na(Height_increment_1)) %>%
     mutate(Height_increment = if_else(
       !is.na(Height_increment_2),
@@ -709,6 +1474,12 @@ get_regen_metric_plot<-function(regen_df){
       names_sep   = "_hclass"
     )
   
+  # browsing intensity
+  browsing_sp_df <- regen_df %>%
+    filter(Hclass > 1) %>%
+    group_by(plot, Species) %>%
+    summarise(browsing = sum(Browsing == "Y") / n(), .groups = "drop")
+  
   # ── Final join at plot/subplot ────────────────────────────────────────────────
   final_df <- general_df %>%
     left_join(var_df,          by = "plot") %>%
@@ -717,6 +1488,256 @@ get_regen_metric_plot<-function(regen_df){
     left_join(seedling_df,     by = "plot") %>%
     left_join(sapling_df,     by = "plot") %>%
     left_join(shannon_size_df, by = "plot") %>%
-    left_join(growth_size_df,  by = "plot")
-  return(final_df)
+    left_join(growth_df,  by = "plot") %>% 
+    left_join(growth_size_df,  by = "plot") %>% 
+    left_join(shannon_height_df, by = "plot")%>% 
+    left_join(shade_tol_df, by = "plot")
+  final_sp_df<-general_sp_df %>%
+    left_join(var_sp_df,             by = c("plot","Species")) %>%
+    left_join(shannon_height_sp_df,  by = c("plot","Species")) %>%
+    left_join(growth_sp_df,          by = c("plot","Species")) %>%
+    left_join(growth_sp_size_df,     by = c("plot","Species")) %>%
+    left_join(browsing_sp_df,        by = c("plot","Species")) 
+  return(list(all=final_df,species=final_sp_df))
+}
+
+
+### ADULT METRICS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+get_adults <- function(inventory_df){
+  
+  plot_stand_metrics <- inventory_df %>%
+    mutate(
+      alive = Dead17 == 0 & Cut17 == 0,
+      basal_area_m2 = pi * (DBH2017 / 200)^2,  # DBH in cm -> radius in m
+      alive_big = Dead17 == 0 & Cut17 == 0 & DBH2017 > 20
+    ) %>%
+    group_by(plot) %>%
+    summarise(
+      n_trees_total = n(),
+      n_trees_alive = sum(alive, na.rm = TRUE),
+      n_dead = sum(Dead17 == 1, na.rm = TRUE),
+      n_cut = sum(Cut17 == 1, na.rm = TRUE),
+      n_recruits = sum(Recrut17 == 1, na.rm = TRUE),
+      
+      species_richness_total = n_distinct(SpeciesCode[!is.na(SpeciesCode)]),
+      species_richness_alive = n_distinct(SpeciesCode[alive & !is.na(SpeciesCode)]),
+      species_richness_dominant = n_distinct(SpeciesCode[alive_big & !is.na(SpeciesCode)]),
+      
+      mean_dbh_alive_cm = mean(DBH2017[alive], na.rm = TRUE),
+      median_dbh_alive_cm = median(DBH2017[alive], na.rm = TRUE),
+      max_dbh_alive_cm = max(DBH2017[alive], na.rm = TRUE),
+      sd_dbh_alive_cm = sd(DBH2017[alive], na.rm = TRUE),
+      
+      mean_height_alive_m = mean(Htot2017[alive], na.rm = TRUE),
+      max_height_alive_m = max(Htot2017[alive], na.rm = TRUE),
+      
+      basal_area_alive_m2 = sum(basal_area_m2[alive], na.rm = TRUE),
+      mean_basal_area_alive_m2 = mean(basal_area_m2[alive], na.rm = TRUE),
+      
+      biomass_alive = sum(Biomass2017[alive], na.rm = TRUE),
+      biomass_total = sum(Biomass2017, na.rm = TRUE),
+      virtual_biomass_total = sum(VirtualBiomass2017, na.rm = TRUE),
+      
+      mortality_rate = n_dead / n_trees_total,
+      cutting_rate = n_cut / n_trees_total,
+      recruitment_rate = n_recruits / n_trees_total,
+      
+      .groups = "drop"
+    )
+}
+
+
+### SEGMENTED PLOTS ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+file.segmented<-function(path_plot,
+                         plot_name,
+                         folders=c("regen","hesitation")){
+  path_trees=file.path(path_plot,
+                       paste0(plot_name,"-processing"),
+                       "trees",folders)
+  is.segmented=sum(file.exists(path_trees))
+  
+  if(is.segmented>0){
+    file=paste0("output/dbh_seg_",plot_name,".csv")
+  }else file=NULL
+  return(file)
+}
+
+get_pc_norm_regen<-function(path_plot,
+                            plot_name,
+                            file.segmented,
+                            dtm,
+                            bbox){
+  if(!is.null(file.segmented)){
+    
+    ## gather trees txt files -----------------------
+    dbh_seg=read.csv(file.segmented) %>% 
+      select(-any_of("X")) %>%
+      mutate(across(-any_of("File"), as.numeric)) %>% 
+      filter(DBH<0.12|is.na(DBH)) %>% 
+      mutate(file_long=case_when(grepl("hesit",File)~file.path(path_plot,
+                                                               paste0(plot_name,"-processing"),
+                                                               "trees","hesitation",File),
+                                 grepl("regen",File)~file.path(path_plot,
+                                                               paste0(plot_name,"-processing"),
+                                                               "trees","regen",File)))
+    
+    files=dbh_seg$file_long
+    
+    ## load dtm ------------------------------------
+    dtm_rast <- rast(dtm)
+    
+    
+    ## load trees files and merge in LAS -----------
+    read_xyz <- function(fn) {
+      dt <- read_tree_pc(fn)
+      setDT(dt)
+      dt <- dt[
+        is.finite(X) &
+          is.finite(Y) &
+          is.finite(Z)
+      ]
+      dt[]
+    }
+    
+    tree_list <- lapply(files, read_xyz)
+    tree_list <- Filter(Negate(is.null), tree_list)
+    merged <- rbindlist( tree_list,
+                         use.names = TRUE,
+                         fill = TRUE)
+    las_merged=LAS(merged[, c("X", "Y", "Z")])
+    
+    las_clipped <- clip_rectangle(las_merged,
+                                  xleft   = bbox$xmin,
+                                  ybottom = bbox$ymin,
+                                  xright  = bbox$xmax,
+                                  ytop    = bbox$ymax)
+    
+    
+    # normalize pc height ---------------------------
+    las_norm <- normalize_height(las_clipped, dtm_rast)
+    
+    las_norm@data$X <- las_norm@data$X - min(las_norm@data$X)
+    las_norm@data$Y <- las_norm@data$Y - min(las_norm@data$Y)
+    
+    las_norm <- las_update(las_norm)
+    
+    # las_clip <- filter_poi(las_norm, Z < 5)
+    
+    path_las=paste0("output/",plot_name,"_pcnorm_regen.rdata")
+    save(las_norm,file=path_las)
+  }else{path_las=NULL}
+  return(path_las)
+}
+
+# 
+# pc_norm_seg=tar_read(pc_norm_seg_GER02)
+# rb_norm=tar_read(rb_norm_GER02)
+# voxnorm=tar_read(voxnorm_GER02)
+# bbox=tar_read(bbox_GER02)
+# subplot_extent=tar_read(subplot_extent_GER02)
+# plot_name="GER02"
+# sliced=FALSE
+get_below_canopy_complexity <- function(pc_norm,
+                                        rb_norm,
+                                        voxnorm,
+                                        bbox,
+                                        subplot_extent,
+                                        plot_name,
+                                        voxel_size = 0.25,
+                                        chm_res    = 0.1) {
+  
+  pc_norm <- loadRData(pc_norm)
+  list_rb <- loadRData(rb_norm)
+  voxpad  <- loadRData(voxnorm)
+  
+  chm <- rasterize_canopy(pc_norm, res = chm_res, algorithm = p2r())   # full canopy
+  
+  # ---- below-canopy keep-mask for ONE voxel array, on its own grid -----------
+  # keep[i, j, a] = TRUE when layer a's top (a * voxel_size) is at/below canopy.
+  make_keep <- function(arr) {
+    tmpl <- rast(arr[, , 1]); ext(tmpl) <- ext(chm); crs(tmpl) <- crs(chm)
+    cv   <- resample(chm, tmpl, method = "max")
+    tl   <- as.matrix(cv, wide = TRUE) / voxel_size          # [nr, nc] for THIS array
+    kp   <- outer(tl, seq_len(dim(arr)[3]), function(t, a) a <= t)
+    kp[is.na(kp)] <- FALSE
+    list(keep = kp, no_canopy = is.na(tl))
+  }
+  
+  rb1    <- list_rb[[1]]
+  km_rb  <- make_keep(rb1)       # mask shaped like the rb arrays
+  km_pad <- make_keep(voxpad)    # mask shaped like voxpad
+  
+  # ---- below-canopy PAD (time-invariant): matched raster + cube for FHD ------
+  padkeep   <- voxpad * km_pad$keep
+  pad_below <- rowSums(padkeep, dims = 2, na.rm = TRUE)
+  # pad_below[km_pad$no_canopy] <- NA
+  pad_slice <- rast(pad_below); ext(pad_slice) <- ext(chm); crs(pad_slice) <- crs(chm)
+  pad_matched <- resample(pad_slice, chm, method = "bilinear")
+  names(pad_matched) <- "pad_sum"
+  
+  padkeep_cube <- rast(padkeep); ext(padkeep_cube) <- ext(chm); crs(padkeep_cube) <- crs(chm)
+  
+  # ---- spatial units: plot (geo = NULL) + subplots ---------------------------
+  sub_geo <- lapply(subplot_extent, function(pe)
+    shift(vect(pe), dx = -bbox$xmin, dy = -bbox$ymin))
+  units <- c(list(list(name = "plot", geo = NULL)),
+             lapply(seq_along(subplot_extent), function(sp)
+               list(name = names(subplot_extent)[sp], geo = sub_geo[[sp]])))
+  
+  cropu <- function(r, geo) if (is.null(geo)) r else crop(r, geo)
+  
+  # ---- pre-crop the time-invariant inputs once per unit ----------------------
+  unit_static <- lapply(units, function(u) {
+    chm_u     <- cropu(chm, u$geo)
+    chm_num_u <- chm_u; chm_num_u[is.na(chm_num_u)] <- 0
+    list(
+      name     = u$name,
+      geo      = u$geo,
+      chm      = chm_u,
+      chm_num  = chm_num_u,
+      pad      = cropu(pad_matched,  u$geo),
+      pad_cube = cropu(padkeep_cube, u$geo),
+      pc_gap   = if (is.null(u$geo)) pc_norm else clip_roi(pc_norm, sf::st_as_sf(u$geo))
+    )
+  })
+  
+  n_rows <- length(list_rb) * length(units)
+  rows <- vector("list", n_rows)
+  k <- 0L
+  
+  # ---- time loop: only rb (light) varies -------------------------------------
+  for (t in seq_along(list_rb)) {
+    rb_arr <- list_rb[[t]]
+    time   <- as.numeric(names(list_rb)[t])
+    
+    rb_below <- rowSums(rb_arr * km_rb$keep, dims = 2, na.rm = TRUE)
+    # rb_below[km_rb$no_canopy] <- NA
+    rb_slice <- rast(rb_below); ext(rb_slice) <- ext(chm); crs(rb_slice) <- crs(chm)
+    rb_matched <- resample(rb_slice, chm, method = "bilinear")
+    names(rb_matched) <- "rb"
+    thr <- quantile(values(rb_matched), na.rm = TRUE, probs = 0.005)
+    rb_matched[rb_matched < thr] <- NA
+    rb_matched_mask <- mask(rb_matched, chm)
+    
+    for (us in unit_static) {
+      rb_u  <- cropu(rb_matched,      us$geo)
+      rbm_u <- cropu(rb_matched_mask, us$geo)
+      
+      m <- .slice_metrics(us$chm, us$chm_num, rb_u, rbm_u,
+                          us$pad, us$pad_cube, us$pc_gap,
+                          slice_up = Inf, voxel_size = voxel_size)
+      
+      k <- k + 1L
+      rows[[k]] <- .make_row(plot_name, us$name, time,
+                             slice_num = 0, slice_low = 0, slice_up = NA_real_, m)
+    }
+  }
+  
+  dplyr::bind_rows(rows)
 }
