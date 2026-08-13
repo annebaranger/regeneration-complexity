@@ -1741,3 +1741,232 @@ get_below_canopy_complexity <- function(pc_norm,
   
   dplyr::bind_rows(rows)
 }
+
+
+
+#### GINI AND BIG LEAF ####
+#%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+.gini <- function(x) {
+  x <- x[is.finite(x)]
+  x <- x[x >= 0]
+  n <- length(x)
+  if (n < 2L) return(NA_real_)
+  s <- sum(x)
+  if (s <= 0) return(NA_real_)
+  x <- sort(x)
+  (2 * sum(seq_len(n) * x) / (n * s)) - (n + 1) / n
+}
+
+## --------------------------------------------------------------------------
+## Array 3D [row, col, z] -> SpatRaster multicouche (1 couche = 1 tranche z)
+## L'emprise est calée sur l'origine (0,0), comme les géométries décalées
+## par -bbox$xmin / -bbox$ymin.
+## --------------------------------------------------------------------------
+.cube_rast <- function(a, vox, crs_ref = "") {
+  r <- terra::rast(a)
+  terra::ext(r) <- c(0, terra::ncol(r) * vox, 0, terra::nrow(r) * vox)
+  if (nzchar(crs_ref)) terra::crs(r) <- crs_ref
+  names(r) <- paste0("z", seq_len(terra::nlyr(r)))
+  r
+}
+
+## --------------------------------------------------------------------------
+## Métriques pour une zone (plot entier ou subplot déjà croppé)
+##   rb_cube  : SpatRaster, énergie reçue par voxel
+##   pad_cube : SpatRaster, PAD par voxel (mêmes dimensions)
+##   z_band   : indices de couches pour le Gini horizontal
+##   vox      : taille de voxel (m)
+##   k        : coefficient d'extinction du big-leaf
+##   top_idx  : indice de la couche sommitale (NULL = déduit du PAD)
+## --------------------------------------------------------------------------
+.light_metrics <- function(rb_cube, pad_cube, z_band, vox, k,
+                           top_idx = NULL, keep_profiles = FALSE,
+                           pad_is_density = TRUE) {
+  
+  rb_prof  <- as.numeric(terra::global(rb_cube,  "mean", na.rm = TRUE)[, 1])
+  pad_prof <- as.numeric(terra::global(pad_cube, "mean", na.rm = TRUE)[, 1])
+  nz <- length(rb_prof)
+  
+  ## ---- sommet de canopée -------------------------------------------------
+  if (is.null(top_idx)) {
+    w <- which(pad_prof > 0 & is.finite(pad_prof))
+    top <- if (length(w)) max(w) else nz
+  } else {
+    top <- min(top_idx, nz)
+  }
+  zz     <- seq_len(top)
+  rb_p   <- rb_prof[zz]
+  pad_p  <- pad_prof[zz]
+  z_mid  <- (zz - 0.5) * vox
+  
+  ## ---- 1. Gini horizontal ------------------------------------------------
+  z_band <- z_band[z_band >= 1 & z_band <= nz]
+  band   <- terra::app(terra::subset(rb_cube, z_band), fun = sum, na.rm = TRUE)
+  gini_h <- .gini(terra::values(band, mat = FALSE))
+  
+  ## ---- 2. Gini vertical --------------------------------------------------
+  gini_v <- .gini(rb_p)
+  
+  ## ---- 3. Écart au big-leaf ---------------------------------------------
+  ## PAD stocké en densité (m2/m3) -> surface par couche = densité * épaisseur
+  lai_layer <- if (pad_is_density) pad_p * vox else pad_p
+  ## PAI total moyen de la zone (m2/m2), redistribué uniformément sur [0, top]
+  pai    <- sum(lai_layer, na.rm = TRUE)
+  pad_bl <- pai / top                     # surface foliaire par couche
+  ## surface foliaire cumulée depuis le sommet, au milieu de chaque couche
+  Lcum   <- pad_bl * (top - zz + 0.5)
+  rb_bl  <- exp(-k * Lcum)
+  
+  ## normalisation : 1 dans la couche sommitale pour les deux profils
+  ref <- rb_p[top]
+  if (!is.finite(ref) || ref <= 0) {
+    rb_obs <- rep(NA_real_, top)
+  } else {
+    rb_obs <- rb_p / ref
+  }
+  rb_bl <- rb_bl / rb_bl[top]
+  
+  d          <- rb_obs - rb_bl
+  diff_abs   <- sum(abs(d), na.rm = TRUE)
+  diff_mean  <- mean(abs(d), na.rm = TRUE)
+  diff_sign  <- sum(d, na.rm = TRUE)
+  diff_rmse  <- sqrt(mean(d^2, na.rm = TRUE))
+  
+  if (top >= 2L) {
+    sl_obs      <- diff(rb_obs) / vox
+    sl_bl       <- diff(rb_bl)  / vox
+    ds          <- sl_obs - sl_bl
+    slope_abs   <- sum(abs(ds), na.rm = TRUE)
+    slope_mean  <- mean(abs(ds), na.rm = TRUE)
+    slope_sign  <- sum(ds, na.rm = TRUE)
+  } else {
+    slope_abs <- slope_mean <- slope_sign <- NA_real_
+  }
+  
+  out <- data.frame(
+    gini_h_rb          = gini_h,
+    gini_v_rb          = gini_v,
+    bl_diff_abs        = diff_abs,
+    bl_diff_abs_mean   = diff_mean,
+    bl_diff_signed     = diff_sign,
+    bl_diff_rmse       = diff_rmse,
+    bl_slope_abs       = slope_abs,
+    bl_slope_abs_mean  = slope_mean,
+    bl_slope_signed    = slope_sign,
+    pai                = pai,
+    z_top              = top * vox,
+    n_layers           = top,
+    rb_top_mean        = ref
+  )
+  
+  if (keep_profiles) {
+    attr(out, "profile") <- data.frame(
+      z         = z_mid,
+      rb_mean   = rb_p,
+      pad       = pad_p,
+      lai_layer = lai_layer,
+      rb_obs  = rb_obs,
+      rb_bl   = rb_bl
+    )
+  }
+  out
+}
+
+## --------------------------------------------------------------------------
+## Fonction principale
+## --------------------------------------------------------------------------
+get_light_metrics <- function(rb_norm,
+                              voxnorm,
+                              bbox,
+                              subplot_extent,
+                              plot_name,
+                              vox_size      = 0.25,
+                              horiz_low     = 0,      # m
+                              horiz_up      = 4.5,    # m
+                              k             = 0.5,    # extinction big-leaf
+                              z_top         = NULL,   # m, NULL = déduit du PAD
+                              keep_profiles = FALSE,
+                              pad_is_density = TRUE) { # PAD en m2/m3
+  
+  list_rb <- loadRData(rb_norm) 
+  voxpad  <- loadRData(voxnorm)
+  
+  if (!identical(dim(voxpad)[1:2], dim(list_rb[[1]])[1:2])){
+    if(abs(dim(voxpad)[1]-dim(list_rb[[1]])[1])<=2 &
+       abs(dim(voxpad)[2]-dim(list_rb[[1]])[2])<=2){
+      dim_x=min(dim(voxpad)[1],dim(list_rb[[1]])[1])
+      dim_y=min(dim(voxpad)[2],dim(list_rb[[1]])[2])
+      voxpad=voxpad[1:dim_x,1:dim_y,]
+      for(l in seq_along(list_rb)){
+        list_rb[[l]]=list_rb[[l]][1:dim_x,1:dim_y,]
+      }
+    }else{
+      stop("voxpad and rb_norm do not share the same horizontal grid")
+    }
+  } 
+  
+  ## indices de couches pour le Gini horizontal (conversion 1-based)
+  z_band <- seq(floor(horiz_low / vox_size) + 1L,
+                ceiling(horiz_up / vox_size))
+  top_idx <- if (is.null(z_top)) NULL else round(z_top / vox_size)
+  
+  ## géométries des subplots (constantes) ----------------------------------
+  sub_geo <- NULL
+  crs_ref <- ""
+  sub_geo <- lapply(subplot_extent, function(pe) {
+    terra::shift(terra::vect(pe), dx = -bbox$xmin, dy = -bbox$ymin)
+  })
+  crs_ref <- terra::crs(sub_geo[[1]])
+  
+  
+  pad_cube <- .cube_rast(voxpad, vox_size, crs_ref)
+  pad_sub  <- if (is.null(sub_geo)) NULL else
+    lapply(sub_geo, function(g) terra::crop(pad_cube, g))
+  
+  n_rows <- length(list_rb) * (1L + length(sub_geo))
+  rows   <- vector("list", n_rows)
+  profs  <- vector("list", n_rows)
+  k_row  <- 0L
+  
+  for (t in seq_along(list_rb)) {
+    
+    time    <- as.numeric(names(list_rb)[t])
+    rb_cube <- .cube_rast(list_rb[[t]], vox_size, crs_ref)
+    
+    ## ---- échelle plot ----------------------------------------------------
+    m <- .light_metrics(rb_cube, pad_cube, z_band, vox_size, k,
+                        top_idx, keep_profiles, pad_is_density)
+    k_row <- k_row + 1L
+    rows[[k_row]] <- data.frame(plot = plot_name, scale = "plot",
+                                subplot = "plot", time = time,
+                                band_low = horiz_low, band_up = horiz_up,
+                                k = k, m, row.names = NULL)
+    if (keep_profiles)
+      profs[[k_row]] <- transform(attr(m, "profile"),
+                                  plot = plot_name, subplot = "plot",
+                                  time = time)
+    
+    ## ---- échelle subplot -------------------------------------------------
+    for (sp in seq_along(sub_geo)) {
+      rb_s  <- terra::crop(rb_cube, sub_geo[[sp]])
+      m_s   <- .light_metrics(rb_s, pad_sub[[sp]], z_band, vox_size, k,
+                              top_idx, keep_profiles, pad_is_density)
+      k_row <- k_row + 1L
+      rows[[k_row]] <- data.frame(plot = plot_name, scale = "subplot",
+                                  subplot = names(subplot_extent)[sp],
+                                  time = time,
+                                  band_low = horiz_low, band_up = horiz_up,
+                                  k = k, m_s, row.names = NULL)
+      if (keep_profiles)
+        profs[[k_row]] <- transform(attr(m_s, "profile"),
+                                    plot = plot_name,
+                                    subplot = names(subplot_extent)[sp],
+                                    time = time)
+    }
+  }
+  
+  res <- dplyr::bind_rows(rows)
+  if (keep_profiles) attr(res, "profiles") <- dplyr::bind_rows(profs)
+  res
+}

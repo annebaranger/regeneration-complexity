@@ -5,7 +5,7 @@ tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
                             "ncdf4", "terra","sf","purrr","tibble","mgcv",
                             "lidR","ITSMe"),
-               controller = crew_controller_local(workers = 6),
+               controller = crew_controller_local(workers = 3),
                error = "null")
 # lapply(c("targets",
 #          "dplyr", "ggplot2","data.table","tidyr","readxl",
@@ -96,6 +96,19 @@ mapped<-tar_map(
                         smooth_columns = TRUE,
                         touches        = FALSE,
                         return_rasters = FALSE)),
+    tar_target(gini,
+               get_light_metrics(rb_norm,
+                                 voxnorm,
+                                 bbox,
+                                 subplot_extent,
+                                 plot_name,
+                                 vox_size      = 0.25,
+                                 horiz_low     = 0,      # m
+                                 horiz_up      = 4.5,    # m
+                                 k             = 0.5,    # extinction big-leaf
+                                 z_top         = NULL,   # m, NULL = déduit du PAD
+                                 keep_profiles = FALSE,
+                                 pad_is_density = TRUE)),
     tar_target(file_segmented,
                file.segmented(path_plot,
                               plot_name,
@@ -146,6 +159,11 @@ list(
   tar_combine(
     H_ext_all,
     mapped[["H_ext"]],   # grabs metric3d_df_GER02, _GER20, etc.
+    command = dplyr::bind_rows(!!!.x)
+  ),
+  tar_combine(
+    gini_all,
+    mapped[["gini"]],   # grabs metric3d_df_GER02, _GER20, etc.
     command = dplyr::bind_rows(!!!.x)
   ),
   # Analyse regeneration survey ─────────────────────────────────────────────── 
