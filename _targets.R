@@ -295,7 +295,12 @@ list(
       "z_cross_sd",          "Light",        "Height, SD\nat ext = ",
       "zPAD50_agg",          "PAD",          "Height at\n 50% of max(PAD)",
       "zPAD50_cv",           "PAD",          "Height (CV) at\n 50% of max(PAD)",
-      "zPAD50_sd",           "PAD",          "Height (SD) at\n 50% of max(PAD)"
+      "zPAD50_sd",           "PAD",          "Height (SD) at\n 50% of max(PAD)",
+      "gini_h_rb",           "Light",        "Gini horiz.",
+      "gini_v_rb",           "Light",        "Gini vert.",
+      "bl_diff_abs",         "Light",        "Big leaf dif.",
+      "bl_slope_abs",        "Light",        "Big leaf \nslope dif.",
+      "PC1",                 "Light",        "Light PCA axis 1",
     )    
   )
   )

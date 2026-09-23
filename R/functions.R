@@ -1758,11 +1758,10 @@ get_below_canopy_complexity <- function(pc_norm,
   (2 * sum(seq_len(n) * x) / (n * s)) - (n + 1) / n
 }
 
-## --------------------------------------------------------------------------
+
 ## Array 3D [row, col, z] -> SpatRaster multicouche (1 couche = 1 tranche z)
 ## L'emprise est calée sur l'origine (0,0), comme les géométries décalées
 ## par -bbox$xmin / -bbox$ymin.
-## --------------------------------------------------------------------------
 .cube_rast <- function(a, vox, crs_ref = "") {
   r <- terra::rast(a)
   terra::ext(r) <- c(0, terra::ncol(r) * vox, 0, terra::nrow(r) * vox)
@@ -1771,7 +1770,6 @@ get_below_canopy_complexity <- function(pc_norm,
   r
 }
 
-## --------------------------------------------------------------------------
 ## Métriques pour une zone (plot entier ou subplot déjà croppé)
 ##   rb_cube  : SpatRaster, énergie reçue par voxel
 ##   pad_cube : SpatRaster, PAD par voxel (mêmes dimensions)
@@ -1779,7 +1777,6 @@ get_below_canopy_complexity <- function(pc_norm,
 ##   vox      : taille de voxel (m)
 ##   k        : coefficient d'extinction du big-leaf
 ##   top_idx  : indice de la couche sommitale (NULL = déduit du PAD)
-## --------------------------------------------------------------------------
 .light_metrics <- function(rb_cube, pad_cube, z_band, vox, k,
                            top_idx = NULL, keep_profiles = FALSE,
                            pad_is_density = TRUE) {
@@ -1788,7 +1785,7 @@ get_below_canopy_complexity <- function(pc_norm,
   pad_prof <- as.numeric(terra::global(pad_cube, "mean", na.rm = TRUE)[, 1])
   nz <- length(rb_prof)
   
-  ## ---- sommet de canopée -------------------------------------------------
+  ## sommet de canopée -------------------------------------------------
   if (is.null(top_idx)) {
     w <- which(pad_prof > 0 & is.finite(pad_prof))
     top <- if (length(w)) max(w) else nz
@@ -1800,7 +1797,7 @@ get_below_canopy_complexity <- function(pc_norm,
   pad_p  <- pad_prof[zz]
   z_mid  <- (zz - 0.5) * vox
   
-  ## ---- 1. Gini horizontal ------------------------------------------------
+  ## 1. Gini horizontal ------------------------------------------------
   z_band <- z_band[z_band >= 1 & z_band <= nz]
   band   <- terra::app(terra::subset(rb_cube, z_band), fun = sum, na.rm = TRUE)
   gini_h <- .gini(terra::values(band, mat = FALSE))
@@ -1873,9 +1870,7 @@ get_below_canopy_complexity <- function(pc_norm,
   out
 }
 
-## --------------------------------------------------------------------------
 ## Fonction principale
-## --------------------------------------------------------------------------
 get_light_metrics <- function(rb_norm,
                               voxnorm,
                               bbox,
