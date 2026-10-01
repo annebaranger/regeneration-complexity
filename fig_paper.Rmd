@@ -47,65 +47,64 @@ tar_load(c(metric3d_all, metric3d_all_unsliced, metric3d_all_seg,
 
 # def of var_meta
 var_meta=tribble(
-  ~variable,                ~type,                            ~label,
-  "richness",               "Composition",                    "Richness \ntotal",
-  "richness_sapling",       "Composition",                    "Richness \nsaplings",
-  "H",                      "Composition",                    "Shannon \nindex",
-  "cwm_shade",              "Composition",                    "Shade tolerance \n (CWM)",
-  "abundance",              "Quantity",                       "Abundance",
-  "abundance_cv",           "Quantity",                       "Abundance CV",
-  "n_sapling",              "Quantity",                       "Abundance of \nsaplings",
-  "h_mean",                 "Quantity",                       "Mean \nheight",
-  "pad_tot",                "Quantity",                       "PAD \ntotal",
-  "empty_gf",               "Quantity",                       "Gap fraction",
-  "Height_increment_mn",    "Quantity",                       "Height \nincrement",
-  "H_height",               "Complexity",                     "Vertical \ndistribution",
-  "h_cv",                   "Complexity",                     "Height \nvariability",
-  "pad_cv",                 "Complexity",                     "PAD \nvariability",
-  "ri",                     "Complexity",                     "Rumple index",
-  "fhd",                    "Complexity",                     "Foliage height \ndiversity",
-  "browsing",               "Other",                          "Browsing",
-  "lrb_mean",               "Light quantity",                 "Radiativebudget \nmean (logged)",
-  "rb_mean",                "Light quantity",                 "Radiative\nbudget mean",
-  "rb_cv",                  "Light horizontal heterogeneity", "Radiative\nbudget CV",
-  "rb_sd",                  "Light horizontal heterogeneity", "Radiative\nbudget SD",
-  "ext_ref_agg",            "Light quantity",                 "Mean extinction \n at 4.5m",
-  "ext_ref_cv",             "Light horizontal heterogeneity", "Mean extinction \n at 4.5m CV",
-  "ext_ref_sd",             "Light horizontal heterogeneity", "Mean extinction \n at 4.5m SD",
-  "padAbove_agg",           "PAD",                            "PAD above \nregeneration",
-  "padAbove_cv",            "PAD",                            "PAD above \nCV",
-  "padAbove_sd",            "PAD",                            "PAD above \nSD",
-  "padTot_agg",             "PAD",                            "PAD total",
-  "padTot_cv",              "PAD",                            "PAD total CV",
-  "padTot_sd",              "PAD",                            "PAD total sd",
-  "rb_ref_agg",             "Light quantity",                 "RB. at 4.5m",
-  "rb_ref_cv",              "Light horizontal heterogeneity", "RB. at 4.5m \nCV",
-  "rb_ref_sd",              "Light horizontal heterogeneity", "RB. at 4.5m \nSD",
-  "slope_cross_agg",        "Light vertical heterogeneity",   "Light profile slope \nat ext = ",
-  "slope_cross_cv",         "Light vertical heterogeneity",   "Light profile slope, CV \nat ext = ",
-  "slope_cross_sd",         "Light vertical heterogeneity",   "Light profile slope, SD \nat ext = ",
-  "slope_ref_agg",          "Light vertical heterogeneity",   "Light profile slope \nat 4.5m",
-  "slope_ref_cv",           "Light vertical heterogeneity",   "Light profile slope, CV\nat 4.5m",
-  "slope_ref_sd",           "Light vertical heterogeneity",   "Light profile slope, SD\nat 4.5m",
-  "z_cross_agg",            "Light",                          "Height\nat ext = ",
-  "z_cross_cv",             "Light",                          "Height, CV\nat ext = ",
-  "z_cross_sd",             "Light",                          "Height, SD\nat ext = ",
-  "zPAD50_agg",             "PAD",                            "Height at\n 50% of max(PAD)",
-  "zPAD50_cv",              "PAD",                            "Height (CV) at\n 50% of max(PAD)",
-  "zPAD50_sd",              "PAD",                            "Height (SD) at\n 50% of max(PAD)",
-  "gini_h_rb",              "Light horizontal heterogeneity", "Gini index",
-  "gini_v_rb",              "Light vertical heterogeneity",   "Gini vert.",
-  "bl_diff_abs",            "Light vertical heterogeneity",   "Big leaf dif.",
-  "bl_slope_abs",           "Light vertical heterogeneity",   "Big leaf \nslope dif.",
-  "PC1",                    "Light",                          "Light PCA axis 1",
-  "n_trees_alive",          "Adult",                          "Number of\n living trees",
-  "species_richness_alive", "Adult",                          "Adult richness",
-  "mean_dbh_alive_cm",      "Adult",                          "Mean diameter",
-  "mean_height_alive_m",    "Adult",                          "Mean height",
-  "mortality_rate",         "Adult",                          "Mortality",
-  "basal_area_alive_m2",     "Adult",                          "Total basal area"
+  ~variable,                ~type,                            ~label,                                 ~abrv,
+  "richness",               "Composition",                    "Richness \ntotal",                     "Richn. tot.",
+  "richness_sapling",       "Composition",                    "Richness \nsaplings",                  "Richn. sap.", 
+  "H",                      "Composition",                    "Shannon \nindex",                      "H",
+  "cwm_shade",              "Composition",                    "Shade tolerance \n (CWM)",             "Shade tol.",
+  "abundance",              "Quantity",                       "Abundance",                            "Ab.",
+  "abundance_cv",           "Quantity",                       "Abundance CV",                         "Ab. (cv)",
+  "n_sapling",              "Quantity",                       "Abundance of \nsaplings",              "Ab. sap.",
+  "h_mean",                 "Quantity",                       "Mean \nheight",                        "h mean",
+  "pad_tot",                "Quantity",                       "PAD \ntotal",                          "PAD tot.",
+  "empty_gf",               "Quantity",                       "Gap fraction",                         "Gap frac.",
+  "Height_increment_mn",    "Quantity",                       "Height \nincrement",                   "h incr.",
+  "H_height",               "Complexity",                     "Vertical \ndistribution",              "Vert. dist.",
+  "h_cv",                   "Complexity",                     "Height \nvariability",                 "h var.",
+  "pad_cv",                 "Complexity",                     "PAD \nvariability",                    "PAD (cv)",
+  "ri",                     "Complexity",                     "Rumple index",                         "RI",
+  "fhd",                    "Complexity",                     "Foliage height \ndiversity",           "FHD",
+  "browsing",               "Other",                          "Browsing",                             "Brows.",
+  "lrb_mean",               "Light quantity",                 "Radiative budget \nmean (logged)",     "RB (log)",
+  "rb_mean",                "Light quantity",                 "Radiative\nbudget mean",               "RB",
+  "rb_cv",                  "Light horizontal heterogeneity", "Radiative\nbudget CV",                 "RB (cv)",
+  "rb_sd",                  "Light horizontal heterogeneity", "Radiative\nbudget SD",                 "",
+  "ext_ref_agg",            "Light quantity",                 "Mean extinction \n at 4.5m",           "Ext. mean",
+  "ext_ref_cv",             "Light horizontal heterogeneity", "Mean extinction \n at 4.5m CV",        "",
+  "ext_ref_sd",             "Light horizontal heterogeneity", "Mean extinction \n at 4.5m SD",        "",
+  "padAbove_agg",           "PAD",                            "PAD above \nregeneration",             "",
+  "padAbove_cv",            "PAD",                            "PAD above \nCV",                       "",
+  "padAbove_sd",            "PAD",                            "PAD above \nSD",                       "",
+  "padTot_agg",             "PAD",                            "PAD total",                            "",
+  "padTot_cv",              "PAD",                            "PAD total CV",                         "",
+  "padTot_sd",              "PAD",                            "PAD total sd",                         "",
+  "rb_ref_agg",             "Light quantity",                 "RB. at 4.5m",                          "",
+  "rb_ref_cv",              "Light horizontal heterogeneity", "RB. at 4.5m \nCV",                     "",
+  "rb_ref_sd",              "Light horizontal heterogeneity", "RB. at 4.5m \nSD",                     "",
+  "slope_cross_agg",        "Light vertical heterogeneity",   "Light profile slope \nat ext = ",      "",
+  "slope_cross_cv",         "Light vertical heterogeneity",   "Light profile slope, CV \nat ext = ",  "",
+  "slope_cross_sd",         "Light vertical heterogeneity",   "Light profile slope, SD \nat ext = ",  "",
+  "slope_ref_agg",          "Light vertical heterogeneity",   "Light profile slope \nat 4.5m",        "Light profile \nslope",
+  "slope_ref_cv",           "Light vertical heterogeneity",   "Light profile slope, CV\nat 4.5m",     "",
+  "slope_ref_sd",           "Light vertical heterogeneity",   "Light profile slope, SD\nat 4.5m",     "",
+  "z_cross_agg",            "Light",                          "Height\nat ext = ",                    "",
+  "z_cross_cv",             "Light",                          "Height, CV\nat ext = ",                "",
+  "z_cross_sd",             "Light",                          "Height, SD\nat ext = ",                "",
+  "zPAD50_agg",             "PAD",                            "Height at\n 50% of max(PAD)",          "",
+  "zPAD50_cv",              "PAD",                            "Height (CV) at\n 50% of max(PAD)",     "",
+  "zPAD50_sd",              "PAD",                            "Height (SD) at\n 50% of max(PAD)",     "",
+  "gini_h_rb",              "Light horizontal heterogeneity", "Gini index",                           "Gini",
+  "gini_v_rb",              "Light vertical heterogeneity",   "Gini vert.",                           "",
+  "bl_diff_abs",            "Light vertical heterogeneity",   "Big leaf dif.",                        "Big leaf dif.",
+  "bl_slope_abs",           "Light vertical heterogeneity",   "Big leaf \nslope dif.",                "",
+  "PC1",                    "Light",                          "Light PCA axis 1",                     "",
+  "n_trees_alive",          "Adult",                          "Number of\n living trees",             "",
+  "species_richness_alive", "Adult",                          "Adult richness",                       "",
+  "mean_dbh_alive_cm",      "Adult",                          "Mean diameter",                        "",
+  "mean_height_alive_m",    "Adult",                          "Mean height",                          "",
+  "mortality_rate",         "Adult",                          "Mortality",                            "",
+  "basal_area_alive_m2",     "Adult",                         "Total basal area",                     ""
 ) 
-
 
 # all tls metrics
 tls_metrics = rbind(metric3d_all,metric3d_all_unsliced) %>% 
@@ -147,6 +146,13 @@ prep_data<-function(df,df_2=NULL,id_cols,plot_level,t=12,s=0,tg=0.9){
   }
   return(df_f)
 }
+
+save_fig <- function(plot, name, width, height) {
+  ggsave(file.path("figures", paste0(name, ".png")), plot,
+         width = width, height = height,units="cm", dpi = 600, bg = "white")
+  ggsave(file.path("figures", paste0(name, ".pdf")), plot,
+         width = width, height = height,units="cm", device = cairo_pdf)
+}
 ```
 
 # Regeneration structure pattern
@@ -155,6 +161,7 @@ prep_data<-function(df,df_2=NULL,id_cols,plot_level,t=12,s=0,tg=0.9){
 ```{r, fig.width=10, fig.height=6}
 # varaibles for the pca
 var_pca=c('richness','H','richness_sapling','cwm_shade','abundance','n_sapling','Height_increment_mn','H_height','empty_gf','pad_tot','pad_cv','ri','fhd')
+var_tls=c('empty_gf','pad_tot','pad_cv','ri','fhd')
 
 # create dataset 
 pca_data_plot= prep_data(tls_metrics,forest_data_plot,var_pca,plot_level = "plot")
@@ -186,25 +193,81 @@ var_coord <- tibble(
   cos2     = rowSums(v$cos2[, 1:2])
   ) %>%
   left_join(var_meta, by = "variable") %>%
-  mutate(type = replace_na(type, "Other"))
+  mutate(type = replace_na(type, "Other"),
+         Source = case_when(variable%in%var_tls~"Lidar-derived",
+                            TRUE~"Inventory-derived"))
 
 
 # plot
+
+# axis
+all_vals <- c(pts$PC1, pts$PC2, var_coord$PC1 * 5, var_coord$PC2 * 5)
+brks <- pretty(range(all_vals, na.rm = TRUE), n = 5)
+lims <- c(floor(range(all_vals, na.rm = TRUE)[1]),ceiling(range(all_vals, na.rm = TRUE)[2]))   # limits snap to the outer breaks
+
+# labels
+scale_f <- 5
+lab_df <- var_coord %>%
+  mutate(x = PC1 * scale_f *1.01 ,
+         y = PC2 * scale_f *1.01 ,
+         abrv, type,.keep="none")
+arrow_pts <- var_coord %>%
+  crossing(t = seq(0.05, 1, length.out = 7)) %>%
+  mutate(x = PC1 * scale_f * t,
+         y = PC2 * scale_f * t,
+         abrv = "", type,.keep="none")
+
+repel_df <- bind_rows(lab_df, arrow_pts)
+
+
+
+# kw tests
+test_df <- pts %>%
+  filter(!is.na(reg_category)) %>%
+  mutate(reg_category = droplevels(factor(reg_category))) %>%
+  pivot_longer(c(PC1, PC2), names_to = "axis", values_to = "score") %>%
+  group_by(axis) %>%
+  kruskal_test(score ~ reg_category)%>%
+  add_significance("p") %>%   # adds stars column "p.signif" (ns, *, **, ***)
+  mutate(label = paste0(
+    "KW :\n ",
+    ifelse(p < 0.001, "p < 0.001", paste0("p = ", formatC(p, format = "f", digits = 3))),
+    " ", ifelse(p.signif == "ns", "", p.signif)
+  ))
+
+
+# plots
 ggplot() +
+  geom_vline(xintercept = 0,colour="darkgrey",linewidth=0.2)+geom_hline(yintercept = 0,colour="darkgrey",linewidth=0.2)+
   geom_point(
     data = pts,
-    aes(PC1, PC2, shape = plot_level, size = plot_level, color = reg_category)
+    aes(PC1, PC2, shape = plot_level, size = plot_level, color = reg_category),
+    size=0.5
   ) +
   geom_xsideboxplot(
     data = pts %>% filter(!is.na(reg_category)),
     aes(x = PC1, y = reg_category, fill = reg_category),
+    whisker.linewidth =0.2,median.linewidth =0.2,box.linewidth=0.2,
     orientation = "y", outliers = FALSE
   ) +
   geom_ysideboxplot(
     data = pts %>% filter(!is.na(reg_category)),
     aes(y = PC2, x = reg_category, fill = reg_category),
+    whisker.linewidth =0.2,median.linewidth =0.2,box.linewidth=0.2,
     orientation = "x", outliers = FALSE
   )+
+  geom_xsidetext(
+    data = filter(test_df, axis == "PC1"),
+    aes(x = 2.7, y = "Medium", label = label),
+    size = 7.5,size.unit="pt",
+    vjust=-0.02,
+    inherit.aes = FALSE
+  ) +
+  geom_ysidetext(
+    data = filter(test_df, axis == "PC2"),
+    aes(x = "Medium", y = 2.5, label = label),
+    size = 7.5, size.unit="pt", inherit.aes = FALSE
+  ) +
   scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
   scale_shape_manual(name = "Spatial scale", values = c("Plot" = 19, "Subplot" = 1)) +
   scale_size_manual(name = "Spatial scale", values = c("Plot" = 2.5, "Subplot" = 1.5)) +
@@ -213,42 +276,92 @@ ggplot() +
   new_scale_color() +
   geom_segment(
     data = var_coord,
-    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5, color = type),
-    arrow = arrow(length = unit(0.20, "cm")), lineend = "round"
+    aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5, color = type,linewidth = Source),
+    arrow = arrow(length = unit(0.10, "cm")), lineend = "round"
   ) +
   geom_text_repel(
-    data = var_coord,
-    aes(x = PC1*5, y = PC2*5, label = label, color = type),
-    size = 3, show.legend = FALSE
+    data = repel_df,
+    aes(x = x, y = y, label = abrv, color = type),
+    size = 8*0.353,
+    # box.padding = 0.4,        # space around each label
+    # point.padding = 0.15,     # space kept from the obstacle points
+    # # min.segment.length = 0.3,   # always draw a leader line if a label moves
+    segment.color = "grey50",
+    segment.size = 0.1,
+    # max.overlaps = Inf,       # never drop labels
+    # force = 2,                # push harder
+    seed = 58,                # reproducible layout
+    show.legend = FALSE
   ) +
   scale_color_brewer(name = "Variable type", palette = "Dark2") +
+  scale_linewidth_manual(name = "Data source", 
+                         values = c("Lidar-derived" = 0.45, "Inventory-derived" = 0.2)) +
   theme_minimal() +
-  # shrink the side panels + hide their axes
   theme(
     # --- main panel: black frame ---
-    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
-    
-    # --- side panels: small ---
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.5),
+    panel.grid = element_line(linewidth = 0.2),
+    # --- side panels
     ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
-    
-    # --- side panels: no grid ---
     ggside.panel.grid = element_blank(),
-    
-    # --- side panels: no frame/border of their own, hide their axes ---
     ggside.panel.border = element_blank(),
     ggside.panel.background = element_blank(),
     ggside.axis.text  = element_blank(),
     ggside.axis.ticks = element_blank(),
-    
-  legend.position = "bottom"
+
+    legend.position = "bottom",
+    legend.location = "pannel",
+    legend.direction = "vertical",
+    legend.justification = "left",
+    legend.key.spacing = unit(0,"pt"),
+    legend.text=element_text(margin=margin(l=0),size=8),
+
+    aspect.ratio = 1,
+    text=element_text(size=8)
   )+
   labs(
     x = paste0("PCA axis 1 (", round(summary(pca_res)$importance["Proportion of Variance","PC1"]*100, 1), "% of variation)"),
     y = paste0("PCA axis 2 (", round(summary(pca_res)$importance["Proportion of Variance","PC2"]*100, 1), "% of variation)")
   ) + 
-  coord_cartesian()->c
+  scale_x_continuous(limits = lims, breaks = brks) +
+  scale_y_continuous(limits = lims, breaks = brks) ->c
 c
+
+
+
+ggsave(file.path("figures", paste0("mainfig1_PCA_regen", ".png")), c,
+         width=8.5,height=11,units="cm", dpi = 600, bg = "white",scale = 1.2)
+
+# save_fig(c,"mainfig1_PCA_regen",width=16,height=18)
 ```
+
+
+## correlation table 
+
+```{r}
+# all pairwise correlation tests
+pairs <- combn(names(pca_df), 2, simplify = FALSE)
+
+cor_tab <- map_dfr(pairs, function(v) {
+  ct <- cor.test(pca_df[[v[1]]], pca_df[[v[2]]], method = "pearson", exact = FALSE)
+  tibble(var1 = v[1], var2 = v[2],
+         rho = unname(ct$estimate),
+         p = ct$p.value)
+}) %>%
+  mutate(
+    p_adj  = p.adjust(p, method = "bonferroni"),
+    signif = case_when(
+      p_adj < 0.001 ~ "***",
+      p_adj < 0.01  ~ "**",
+      p_adj < 0.05  ~ "*",
+      TRUE          ~ "ns"
+    )
+  ) %>%
+  arrange(desc(abs(rho)))
+
+cor_tab
+```
+
 - hard to distinguish different regeneration clusters
 - variable type are not necessarly colinear, can even be non correlated
 - field-derived and lidar-derived variables roughly non correlated, catching different dimensions
@@ -289,11 +402,30 @@ var_coord=var_coord %>%
          type=if_else(is.na(type),"Other",type))
 
 # plot
+all_vals <- c(pts$PC1, pts$PC2, var_coord$PC1 * 5, var_coord$PC2 * 5)
+brks <- pretty(range(all_vals, na.rm = TRUE), n = 5)
+lims <- c(floor(range(all_vals, na.rm = TRUE)[1]),ceiling(range(all_vals, na.rm = TRUE)[2]))   # limits snap to the outer breaks
+
+
+scale_f <- 5
+lab_df <- var_coord %>%
+  mutate(x = PC1 * scale_f *1.01 ,
+         y = PC2 * scale_f *1.01 ,
+         abrv, type,.keep="none")
+arrow_pts <- var_coord %>%
+  crossing(t = seq(0.05, 1, length.out = 7)) %>%
+  mutate(x = PC1 * scale_f * t,
+         y = PC2 * scale_f * t,
+         abrv = "", type,.keep="none")
+
+repel_df <- bind_rows(lab_df, arrow_pts)
+
+
 ggplot() +
   geom_point(
     data = light_pca_pred,
     aes(PC1, PC2, color = reg_category),
-    size=2.5 #,show.legend = FALSE
+    size=0.8 #,show.legend = FALSE
   ) +
   scale_color_brewer(name = "Regeneration cover", palette = "YlGn",na.value = "grey") +
   
@@ -302,24 +434,14 @@ ggplot() +
   geom_segment(
     data = var_coord,
     aes(x = 0, y = 0, xend = PC1*5, yend = PC2*5,  color = type), #alpha = contrib,
-    arrow = arrow(length = unit(0.20, "cm")),
-    lineend = "round"
+    arrow = arrow(length = unit(0.10, "cm")),
+    lineend = "round",linewidth=0.3
   ) +
   geom_text_repel(
-    data = var_coord,
-    aes(x = PC1*5, y = PC2*5, label = label,  color = type), #alpha = contrib,
-    size = 3, show.legend = FALSE
+    data = repel_df,
+    aes(x = x, y = y, label = abrv,  color = type), #alpha = contrib,
+    size = 8*0.353, show.legend = FALSE
   ) +
-  # geom_xsideboxplot(
-  #   data = light_pca_pred %>% filter(!is.na(reg_category)),
-  #   aes(x = PC1, y = reg_category, fill = reg_category),
-  #   orientation = "y", outliers = FALSE
-  # ) +
-  # geom_ysideboxplot(
-  #   data = light_pca_pred %>% filter(!is.na(reg_category)),
-  #   aes(y = PC2, x = reg_category, fill = reg_category),
-  #   orientation = "x", outliers = FALSE
-  # )+
   scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
   scale_color_brewer(name = "Variable type", palette = "Dark2") +
   guides(color="none")+
@@ -338,23 +460,34 @@ ggplot() +
   scale_x_continuous(breaks = seq(-10, 10, by = 2))+
   theme(
     # --- main panel: black frame ---
-    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.6),
-    
-    # --- side panels: small ---
-    ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
-    
-    # --- side panels: no grid ---
-    ggside.panel.grid = element_blank(),
-    
-    # --- side panels: no frame/border of their own, hide their axes ---
-    ggside.panel.border = element_blank(),
-    ggside.panel.background = element_blank(),
-    ggside.axis.text  = element_blank(),
-    ggside.axis.ticks = element_blank()
-  )-> pca_light
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.5),
+    panel.grid = element_line(linewidth = 0.2),
+    # --- side panels
+    # ggside.panel.scale = 0.15,          # smaller = thinner strips (try 0.10–0.20)
+    # ggside.panel.grid = element_blank(),
+    # ggside.panel.border = element_blank(),
+    # ggside.panel.background = element_blank(),
+    # ggside.axis.text  = element_blank(),
+    # ggside.axis.ticks = element_blank(),
+
+    legend.position = "bottom",
+    legend.location = "pannel",
+    legend.direction = "vertical",
+    legend.justification = "left",
+    legend.key.spacing = unit(0,"pt"),
+    legend.text=element_text(margin=margin(l=0),size=8),
+
+    aspect.ratio = 1,
+    text=element_text(size=8)
+  ) + 
+  scale_x_continuous(limits = lims, breaks = brks) +
+  scale_y_continuous(limits = lims, breaks = brks)-> pca_light
 
 pca_light
 
+
+# ggsave(file.path("figures", paste0("mainfig2_PCA_light", ".png")), pca_light,
+#          width=8.5,height=11,units="cm", dpi = 600, bg = "white",scale = 1.1)
 ```
 
 ## comparative effects of plant material and light distribution on the structure of regeneration
@@ -375,35 +508,61 @@ light_pca_comp <- prep_data(tls_metrics,forest_data_plot,
                          TRUE~label),
          label = fct_inorder(label))
 
+# 
+# cld_one <- function(df) {
+#   lev <- levels(droplevels(df$reg_category))
+#   if (length(lev) < 2) return(tibble(reg_category = lev, letter = ""))
+#   
+#   kw <- kruskal.test(value ~ droplevels(reg_category), data = df)
+#   if (is.na(kw$p.value) || kw$p.value > 0.05)
+#     return(tibble(reg_category = lev, letter = "a"))   # no differences
+#   
+#   dt <- dunn_test(df, value ~ reg_category, p.adjust.method = "BH")
+#   pv <- setNames(dt$p.adj, paste(dt$group1, dt$group2, sep = "-"))
+#   l  <- multcompLetters(pv)$Letters
+#   tibble(reg_category = names(l), letter = unname(l))
+# }
+# 
+# cld_df <- light_pca_comp %>%
+#   group_by(type, label) %>%
+#   group_modify(~ cld_one(.x)) %>%
+#   ungroup() %>%
+#   mutate(reg_category = factor(reg_category, levels = levels(light_pca_comp$reg_category))) %>%
+#   # assign y coordinates
+#   left_join(
+#     light_pca_comp %>% group_by(type, label, reg_category) %>%
+#       summarise(y = max(value, na.rm = TRUE), .groups = "drop"),
+#     by = c("type", "label", "reg_category")
+#   )
 
-cld_one <- function(df) {
-  lev <- levels(droplevels(df$reg_category))
-  if (length(lev) < 2) return(tibble(reg_category = lev, letter = ""))
-  
-  kw <- kruskal.test(value ~ droplevels(reg_category), data = df)
-  if (is.na(kw$p.value) || kw$p.value > 0.05)
-    return(tibble(reg_category = lev, letter = "a"))   # no differences
-  
-  dt <- dunn_test(df, value ~ reg_category, p.adjust.method = "BH")
-  pv <- setNames(dt$p.adj, paste(dt$group1, dt$group2, sep = "-"))
-  l  <- multcompLetters(pv)$Letters
-  tibble(reg_category = names(l), letter = unname(l))
-}
-
-cld_df <- light_pca_comp %>%
+kw_df <- light_pca_comp %>%
+  mutate(type=case_when(type=="PAD"~"Plant area density\n distribution",
+                        TRUE~type)) %>% 
   group_by(type, label) %>%
-  group_modify(~ cld_one(.x)) %>%
-  ungroup() %>%
-  mutate(reg_category = factor(reg_category, levels = levels(light_pca_comp$reg_category))) %>%
-  # assign y coordinates
-  left_join(
-    light_pca_comp %>% group_by(type, label, reg_category) %>%
-      summarise(y = max(value, na.rm = TRUE), .groups = "drop"),
-    by = c("type", "label", "reg_category")
+  summarise(
+    p = if (n_distinct(reg_category) < 2) NA_real_
+        else kruskal.test(value ~ droplevels(reg_category))$p.value,
+    y = max(value, na.rm = TRUE),          # top of the highest point for this variable
+    .groups = "drop"
+  ) %>%
+  # mutate(p = p.adjust(p, method = "BH")) %>%
+  mutate(
+    stars = case_when(
+      is.na(p)  ~ "",
+      p < 0.001 ~ "***",
+      p < 0.01  ~ "**",
+      p < 0.05  ~ "*",
+      p < 0.1   ~ "(*)",
+      TRUE      ~ "ns"                     # use "" to show nothing when not significant
+    )
   )
 
+# kw_df
 
-ggplot(light_pca_comp, aes(label, value, fill = reg_category)) +
+light_pca_comp %>% 
+  mutate(type=case_when(type=="PAD"~"Plant area density\n distribution",
+                        TRUE~type)) %>% 
+  ggplot(aes(label, value, fill = reg_category)) +
   geom_boxplot(position = position_dodge(width = 0.8, preserve = "single"),
                width=0.5,outlier.shape = NA) +
   geom_point(aes(color=reg_category),
@@ -412,10 +571,13 @@ ggplot(light_pca_comp, aes(label, value, fill = reg_category)) +
                                              seed = 1),
              size = 1, alpha = 0.8, shape = 16,
              show.legend = FALSE) +
-  geom_text(data = cld_df,
-            aes(x = label, y = y + 0.25, label = letter, group = reg_category),
-            position = position_dodge(width = 0.8),
+    geom_text(data = kw_df,
+            aes(x = label, y = 2.5, label = stars),
             inherit.aes = FALSE, size = 3, vjust = 0) +
+  # geom_text(data = cld_df,
+  #           aes(x = label, y = y + 0.25, label = letter, group = reg_category),
+  #           position = position_dodge(width = 0.8),
+  #           inherit.aes = FALSE, size = 3, vjust = 0) +
   scale_fill_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
   scale_color_brewer(name = "Regeneration cover", palette = "YlGn", na.value = "grey") +
   facet_grid(~type, scales = "free_x") +
@@ -432,6 +594,31 @@ cowplot::plot_grid(pca_light+theme(legend.position="left"),a,ncol=2,align = "h",
 ```
 
 
+## correlation table 
+
+```{r}
+# all pairwise correlation tests
+pairs <- combn(names(df_pca), 2, simplify = FALSE)
+
+cor_tab <- map_dfr(pairs, function(v) {
+  ct <- cor.test(df_pca[[v[1]]], df_pca[[v[2]]], method = "pearson", exact = FALSE)
+  tibble(var1 = v[1], var2 = v[2],
+         rho = unname(ct$estimate),
+         p = ct$p.value)
+}) %>%
+  mutate(
+    p_adj  = p.adjust(p, method = "bonferroni"),
+    signif = case_when(
+      p_adj < 0.001 ~ "***",
+      p_adj < 0.01  ~ "**",
+      p_adj < 0.05  ~ "*",
+      TRUE          ~ "ns"
+    )
+  ) %>%
+  arrange(desc(abs(rho)))
+
+cor_tab
+```
 
 # Light distribution effect on regeneration structure - plot level
 
@@ -506,7 +693,7 @@ boot_stats %>% filter(explaining !="bl_diff_abs") %>%
   ) %>%
   pivot_longer(cols = c("explained", "explaining")) %>%
   left_join(var_meta, by = c("value" = "variable")) %>% 
-  dplyr::select(-value) %>%
+  dplyr::select(-value,-abrv) %>%
   pivot_wider(names_from = "name", values_from = c("label", "type")) %>%
   mutate(
     type_explained   = factor(type_explained,
@@ -515,9 +702,9 @@ boot_stats %>% filter(explaining !="bl_diff_abs") %>%
     label_explaining = factor(label_explaining, levels = order)
   ) %>%
   ggplot(aes(x = med, y = label_explained)) +
-  geom_vline(xintercept = 0, linetype = 2, linewidth = .3, colour = "grey70") +
-  geom_linerange(aes(xmin = lo,  xmax = hi,  colour = p_class), linewidth = .9) +
-  geom_linerange(aes(xmin = lo5, xmax = hi5, colour = p_class), linewidth = 1.5) +
+  geom_vline(xintercept = 0, linetype = 2, linewidth = .2, colour = "grey70") +
+  geom_linerange(aes(xmin = lo,  xmax = hi,  colour = p_class), linewidth = .2) +
+  geom_linerange(aes(xmin = lo5, xmax = hi5, colour = p_class), linewidth = .5) +
   geom_point(aes(colour = p_class), size = 1.3) +
   scale_colour_manual(
     values = c("< 0.001" = "#08306b", "< 0.01" = "#2171b5",
@@ -529,12 +716,17 @@ boot_stats %>% filter(explaining !="bl_diff_abs") %>%
   labs(x = "Standardized coefficient", y = NULL) +
   theme_bw(base_size = 9) +
   theme(
-    panel.spacing.x  = unit(.6, "lines"),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.5),
+    panel.grid = element_line(linewidth = 0.2),
     strip.text.y     = element_text(angle = 0),
     panel.grid.minor = element_blank(),
-    legend.position  = "bottom"
-  )
+    legend.position  = "bottom",
+    text=element_text(size=8)
+  )->light_eff
 
+
+ggsave(file.path("figures", paste0("mainfig3_light_eff", ".png")), light_eff,
+         width=16,height=9,units="cm", dpi = 600, bg = "white",scale = 1.2)
 ```
 
 # From plot to subplot scale
