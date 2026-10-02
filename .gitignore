@@ -7,3 +7,7 @@ _targets/
 *.rdata
 fig/
 dev/draft.R
+figures/
+data/
+*.html
+fig_explo_files/
