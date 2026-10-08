@@ -47,7 +47,7 @@ plot_pca_regen <- function(res, scale_f = 5, kw_x = 2.7, kw_y = 2.5, mid_level =
                  arrow = arrow(length = unit(0.10, "cm")), lineend = "round") +
     ggrepel::geom_text_repel(data = arrow_label_df(vc, scale_f),
                              aes(x = x, y = y, label = abrv, color = type),
-                             size = 8 * 0.353, segment.color = "grey50", segment.size = 0.1,
+                             size=9 * 0.353, segment.color = "grey50", segment.size = 0.1,
                              seed = 58, show.legend = FALSE) +
     scale_color_brewer(name = "Variable type", palette = "Dark2") +
     scale_linewidth_manual(name = "Data source",
@@ -78,7 +78,7 @@ plot_pca_light <- function(res, scale_f = 5, point_size = 0.8) {
                  arrow = arrow(length = unit(0.10, "cm")), lineend = "round", linewidth = 0.3) +
     ggrepel::geom_text_repel(data = arrow_label_df(res$var_coord, scale_f),
                              aes(x = x, y = y, label = abrv, color = type),
-                             size = 8 * 0.353, show.legend = FALSE) +
+                             size=9 * 0.353, show.legend = FALSE) +
     scale_color_brewer(name = "Variable type", palette = "Dark2") +
     # guides(color = "none") +
     theme_pca_paper() +
@@ -147,7 +147,7 @@ plot_effects <- function(stats, var_meta, responses, predictors, drop = NULL,
     geom_linerange(aes(xmin = lo5, xmax = hi5, colour = p_class), linewidth = lw[2]) +
     geom_point(aes(colour = p_class), size = 1.3) +
     scale_colour_manual(values = p_class_colours, drop = FALSE, name = "p (bootstrap)") +
-    facet_grid(type_explained ~ label_explaining, scales = "free_y", space = "free_y") +
+    facet_grid(type_explained ~ label_explaining, scales = "free_y", space = "free_y",switch = "y") +
     labs(x = "Standardized coefficient", y = NULL) +
     theme_minimal() +
     theme(base_size = 9,
@@ -156,8 +156,10 @@ plot_effects <- function(stats, var_meta, responses, predictors, drop = NULL,
           panel.grid.minor = element_blank(),
           strip.text.y = element_text(angle = 0),
           strip.text=element_text(face="bold"),
+          strip.placement   = "outside",                  # strips go outside the y-axis labels
+          strip.text.y.left = element_text(angle = 90),
           legend.position = "bottom",
-          text = element_text(size = 8))
+          text = element_text(size=9))
 }
 
 # --- Temporal vs spatial variability -------------------------------------------
@@ -204,22 +206,19 @@ plot_varpart_venn <- function(vp) {
     geom_polygon(data = rbind(circle(-0.55, "Light"), circle(0.55, "Adults")),
                  aes(x, y, fill = group, group = group),
                  alpha = 0.35, colour = "white", linewidth = 1.2) +
-    geom_text(data = labs_df, aes(x, y, label = text), size = 4.2, fontface = "bold",
+    geom_text(data = labs_df, aes(x, y, label = text), size = 9 * 0.353, fontface = "bold",
               colour = "grey15", lineheight = 0.9) +
     geom_text(data = data.frame(x = c(-0.95, 0.95), y = 1.2, group = c("Light", "Adults")),
-              aes(x, y, label = group, colour = group), size = 5, fontface = "bold") +
-    annotate("text", x = 0, y = -1.3, colour = "grey40", size = 3.8,
-             label = sprintf("Residuals = %.2f", multi$residuals)) +
+              aes(x, y, label = group, colour = group), size = 10 * 0.353, fontface = "bold") +
+    annotate("text", x = 0, y = -1.3, colour = "grey40", size=9 * 0.353,
+             label = sprintf("Residuals = %.2f \nAdjusted R² [jackknife 95 %% CI] \n full model: adj. R² = %.2f, p = %.3f",
+                             multi$residuals,multi$full_adj_r2, multi$p_full)) +
     scale_fill_manual(values = vp_group_colours) +
     scale_colour_manual(values = vp_group_colours) +
     coord_equal(xlim = c(-1.8, 1.8), ylim = c(-1.45, 1.4)) +
-    labs(title = "Variance partitioning of regeneration structure (multivariate RDA)",
-         subtitle = sprintf("Adjusted R² [jackknife 95 %% CI]  |  full model: adj. R² = %.2f, p = %.3f",
-                            multi$full_adj_r2, multi$p_full)) +
     theme_void() +
     theme(legend.position = "none",
-          plot.title    = element_text(face = "bold", size = 13, hjust = 0.5),
-          plot.subtitle = element_text(colour = "grey35", size = 10, hjust = 0.5))
+          text=element_text(size=9))
 }
 
 plot_varpart_univariate <- function(vp, labels, alpha = 0.1) {
@@ -238,26 +237,26 @@ plot_varpart_univariate <- function(vp, labels, alpha = 0.1) {
            y_star   = pmax(value, 0, na.rm = TRUE) + 0.04)
   top <- uf %>%
     mutate(response = factor(response, levels = lev),
-           label = sprintf("Model: adj. R² = %.2f %s", full_adj_r2, p_stars(p_full, "n.s.")))
+           label = sprintf("adj. R² = %.2f %s", full_adj_r2, p_stars(p_full, "n.s.")))
   y_top <- max(d$y_star) + 0.12
   
   fig_a <- ggplot(d, aes(x = response, y = value, fill = fraction)) +
     geom_hline(yintercept = 0, colour = "grey50") +
     geom_col(position = position_dodge(width = 0.8), width = 0.75) +
     geom_text(aes(y = y_star, label = p_stars(p, "n.s."), group = fraction),
-              position = position_dodge(width = 0.8), vjust = 0, size = 3.6, colour = "grey20") +
+              position = position_dodge(width = 0.8), vjust = 0, size=9 * 0.353, colour = "grey20") +
     geom_text(data = top, aes(x = response, y = y_top, label = label),
-              inherit.aes = FALSE, size = 3.3, colour = "grey25") +
+              inherit.aes = FALSE, size=9 * 0.353, colour = "grey25") +
     scale_fill_manual(values = vp_fraction_colours, name = NULL) +
     scale_x_discrete(labels = pn) +
     scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
-    labs(x = NULL, y = "Variance explained (adjusted R²)",
-         title = "Variance explained by light and adults",
-         subtitle = "Stars: permutation tests of unique fractions,Holm-corrected across responses") +
+    labs(x = NULL, y = "Variance explained (adjusted R²)")+
+         #title = "Variance explained by light and adults",
+         #subtitle = "Stars: permutation tests of unique fractions,Holm-corrected across responses") +
     theme_varpart() +
     theme(panel.grid.major.x = element_blank())
   
-  fig_b <- vp$uni_importance %>%
+  fig_b <-vp$uni_importance %>%
     mutate(response = factor(response, levels = lev),
            variable = factor(variable, levels = c(rev(vp$light_vars), rev(vp$adult_vars))),
            group    = factor(group, levels = c("Adults", "Light")),
@@ -265,18 +264,22 @@ plot_varpart_univariate <- function(vp, labels, alpha = 0.1) {
                               if_else(p_perm > alpha, "", paste0("\n", p_stars(p_perm, "n.s."))))) %>%
     ggplot(aes(x = response, y = variable, fill = individual)) +
     geom_tile(colour = "white", linewidth = 1.2) +
-    geom_text(aes(label = label), size = 3.6, lineheight = 0.85, colour = "grey10") +
-    facet_grid(group ~ ., scales = "free_y", space = "free_y") +
+    geom_text(aes(label = label), size=9 * 0.353, lineheight = 0.85, colour = "grey10") +
+    facet_grid(group ~ ., scales = "free_y", space = "free_y",switch = "y") +
     scale_fill_gradient2(low = "#B2443A", mid = "white", high = "#2B4C7E", midpoint = 0,
-                         name = "Individual importance\n(adjusted R²)") +
+                         name = "Individual \nimportance\n(adjusted R²)") +
     scale_x_discrete(labels = pn, position = "top") +
     scale_y_discrete(labels = pn) +
-    labs(x = NULL, y = NULL, title = "Importance ranking of predictors",
-         subtitle = "#: rank within each response  |  Stars: permutation test") +
+    labs(x = NULL, y = NULL) + #, title = "Importance ranking of predictors",
+        # subtitle = "#: rank within each response  |  Stars: permutation test") +
     theme_varpart() +
     theme(panel.grid = element_blank(),
           strip.text.y = element_text(face = "bold", angle = 0, size = 11),
-          legend.key.width = unit(1.2, "cm"))
+          legend.key.width = unit(0.5, "cm"),
+          legend.key.height = unit(0.25, "cm"),
+          strip.placement   = "outside",                  # strips go outside the y-axis labels
+          strip.text.y.left = element_text(angle = 90),
+          text=element_text(zie=8))
   
   patchwork::wrap_plots(fig_a, fig_b, widths = c(1.3, 1)) +
     patchwork::plot_annotation(tag_levels = "A")

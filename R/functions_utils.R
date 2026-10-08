@@ -160,7 +160,7 @@ theme_pca_paper <- function() {
       panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.5),
       panel.grid = element_line(linewidth = 0.2),
       legend.position = "bottom",
-      legend.location = "panel",
+      legend.location = "plot",
       legend.direction = "vertical",
       legend.justification = "left",
       legend.key.spacing = unit(0, "pt"),
@@ -179,7 +179,8 @@ theme_varpart <- function() {
       plot.subtitle    = element_text(colour = "grey35", size = 10),
       plot.caption     = element_text(colour = "grey45", size = 9, hjust = 0),
       axis.title       = element_text(colour = "grey25"),
-      legend.position  = "bottom"
+      legend.position  = "bottom",
+      text=element_text(size=8)
     )
 }
 
