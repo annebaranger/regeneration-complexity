@@ -35,9 +35,11 @@ paper_vars <- list(
                  "Height_increment_mn", "empty_gf", "H_height", "fhd", "ri", "pad_cv"),
   light_expl = c("lrb_mean", "gini_h_rb", "slope_ref_agg", "bl_diff_abs"),
   adult_expl = c("n_trees_alive", "species_richness_alive", "mean_dbh_alive_cm",
-                 "basal_area_alive_m2", "mean_height_alive_m", "browsing"),
+                 "mortality_rate","recruitment_rate", "max_dbh_alive_cm", "browsing"),
+  # adult_expl = c("n_trees_alive", "species_richness_alive", "mean_dbh_alive_cm",
+  #                "basal_area_alive_m2", "mean_height_alive_m", "browsing"),
   variability = c("ext_ref_agg", "slope_ref_agg", "gini_h_rb"),
-  vp_adult   = c("species_richness_alive", "mean_dbh_alive_cm", "mean_height_alive_m"),
+  vp_adult   = c("species_richness_alive", "mean_dbh_alive_cm", "n_trees_alive"),
   vp_light   = c("lrb_mean", "gini_h_rb", "slope_ref_agg"),
   vp_regen   = c("richness", "abundance", "ri"),
   vp_log     = c("abundance"),
@@ -45,7 +47,8 @@ paper_vars <- list(
                  mean_dbh_alive_cm = "Mean DBH", mean_height_alive_m = "Mean height",
                  lrb_mean = "Radiative budget \nmean (log)", gini_h_rb = "Gini index",
                  slope_ref_agg = "Light profile \nslope at 4.5m",
-                 richness = "Richness", abundance = "Abundance", ri = "Complexity")
+                 richness = "Richness", abundance = "Abundance", ri = "Complexity",
+                 n_trees_alive="Tree number")
 )
 
 
@@ -263,8 +266,20 @@ list(
                dplyr::mutate(dplyr::across(c(2,3,6:15), as.numeric))
                
   ),
+  tar_target(inventory_path_2025,
+             "C:/Users/Anne/OneDrive - University of Cambridge/2. FLF project/germany-2025/regeneration-germany/germany_inventory_stems.csv",
+             format="file"
+  ),
+  tar_target(inventory_df_2025,
+             read.csv(inventory_path_2025) %>% 
+               filter(plot %in% plot_values$plot_name) %>% 
+               dplyr::mutate(dplyr::across(c(2,3,4,6), as.numeric))
+  ),
   tar_target(plot_df,
              get_adults(inventory_df)),
+  tar_target(plot_df_2025,
+             get_adults_2025(inventory_df_2025)),
+  
   
   
   # get shade tolerance ─────────────────────────────────────────────────────────
@@ -284,11 +299,11 @@ list(
   tar_target(tls_metrics,
              build_tls_metrics(metric3d_all, metric3d_all_unsliced, H_ext_all, gini_all)),
   tar_target(forest_data_plot,
-             build_forest_data_plot(regen_metrics_plot, regen_cat, plot_df)),
+             build_forest_data_plot(regen_metrics_plot, regen_cat, plot_df_2025)),
   tar_target(forest_data_subplot,
-             build_forest_data_subplot(regen_metrics_subplot, regen_cat_subplot, plot_df)),
+             build_forest_data_subplot(regen_metrics_subplot, regen_cat_subplot, plot_df_2025)),
   
-  # --- regeneration structure PCA ------------------------------------------
+  # --- 1. regeneration structure PCA ------------------------------------------
   tar_target(pca_regen,
              run_pca_regen(tls_metrics, forest_data_plot, forest_data_subplot, regen_cat,
                            paper_vars$pca_regen, paper_vars$lidar, var_meta)),
@@ -299,7 +314,7 @@ list(
   tar_target(cor_regen, cor_table(pca_regen$data)),
   tar_target(fig_pca_regen, plot_pca_regen(pca_regen)),
   tar_target(file_fig1,
-             save_fig(fig_pca_regen, "mainfig1_PCA_regen", 8.5, 11, scale = 1.2),
+             save_fig(fig_pca_regen, "mainfig1_PCA_regen_v2", 8.5, 11, scale = 1.2),
              format = "file"),
   
   # --- 2. light descriptors, plot level ---------------------------------------
@@ -350,13 +365,15 @@ list(
   tar_target(fig_light_eff_subplot,
              plot_effects(boot_light_subplot, var_meta, paper_vars$regen,
                           paper_vars$light_expl, drop = "bl_diff_abs", lw = c(0.9, 1.5))),
-  
+  tar_target(file_fig4,
+             save_fig(fig_light_eff_subplot, "si_light_eff_subplot", 16, 9, scale = 1.2),
+             format = "file"),
   # --- 5. temporal vs spatial variability ---------------------------------------
   tar_target(light_variability, compute_light_variability(tls_metrics, paper_vars$variability)),
   tar_target(fig_variability, plot_variability(light_variability, var_meta)),
   tar_target(file_fig5.1,
              save_fig(fig_variability, 
-                       "si_tempspatvar", 16, 9, scale = 1.1),
+                       "si_tempspatvar", 16, 9, scale = 1),
              format = "file"),
   
   # --- 6. adult structure effects -----------------------------------------------
@@ -369,7 +386,7 @@ list(
              plot_effects(boot_adult, var_meta, paper_vars$regen,
                           paper_vars$adult_expl, lw = c(0.9, 1.5))),
   tar_target(file_fig6,
-             save_fig(fig_light_eff, "si_adult_eff", 16, 9, scale = 1.2),
+             save_fig(fig_adult_eff, "si_adult_eff", 16, 9, scale = 1.2),
              format = "file"),
   
   # --- 7. variance partitioning --------------------------------------------------
@@ -384,7 +401,7 @@ list(
              format = "file"),
   tar_target(fig_varpart_uni,  plot_varpart_univariate(varpart, paper_vars$vp_labels)),
   tar_target(file_fig7,
-             save_fig(fig_varpart_uni, "mainfig7_varpart", 16, 9, scale = 1.2),
+             save_fig(fig_varpart_uni, "mainfig7_varpart_v2", 16, 9, scale = 1.2),
              format = "file"),
   tar_target(fig_rda_triplot,  plot_rda_triplot(varpart, paper_vars$vp_labels)),
   tar_target(file_fig7.2,

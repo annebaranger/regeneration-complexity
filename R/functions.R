@@ -1549,6 +1549,51 @@ get_adults <- function(inventory_df){
 }
 
 
+get_adults_2025 <- function(inventory_df){
+  
+  plot_stand_metrics <- inventory_df %>%
+    mutate(
+      alive = status_2025 == "alive",
+      dead=status_2025 %in%c("fallen","gone","gone (stump)","snag","not recorded"),
+      recruit= status_2025=="ingrowth",
+      basal_area_m2 = pi * (dbh_2025_cm / 200)^2,  # DBH in cm -> radius in m
+      alive_big = status_2025 == "alive" & dbh_2025_cm > 20
+    ) %>%
+    group_by(plot) %>%
+    summarise(
+      n_trees_total = n(),
+      n_trees_alive = sum(alive, na.rm = TRUE),
+      n_dead = sum(dead == 1, na.rm = TRUE),
+      # n_cut = sum(Cut17 == 1, na.rm = TRUE),
+      n_recruits = sum(recruit == 1, na.rm = TRUE),
+      
+      species_richness_total = n_distinct(species[!is.na(species)]),
+      species_richness_alive = n_distinct(species[alive & !is.na(species)]),
+      species_richness_dominant = n_distinct(species[alive_big & !is.na(species)]),
+      
+      mean_dbh_alive_cm = mean(dbh_2025_cm[alive], na.rm = TRUE),
+      median_dbh_alive_cm = median(dbh_2025_cm[alive], na.rm = TRUE),
+      max_dbh_alive_cm = max(dbh_2025_cm[alive], na.rm = TRUE),
+      sd_dbh_alive_cm = sd(dbh_2025_cm[alive], na.rm = TRUE),
+      
+      # mean_height_alive_m = mean(Htot2017[alive], na.rm = TRUE),
+      # max_height_alive_m = max(Htot2017[alive], na.rm = TRUE),
+      
+      basal_area_alive_m2 = sum(basal_area_m2[alive], na.rm = TRUE),
+      mean_basal_area_alive_m2 = mean(basal_area_m2[alive], na.rm = TRUE),
+      
+      # biomass_alive = sum(Biomass2017[alive], na.rm = TRUE),
+      # biomass_total = sum(Biomass2017, na.rm = TRUE),
+      # virtual_biomass_total = sum(VirtualBiomass2017, na.rm = TRUE),
+      
+      mortality_rate = n_dead / n_trees_total,
+      # cutting_rate = n_cut / n_trees_total,
+      recruitment_rate = n_recruits / n_trees_total,
+      
+      .groups = "drop"
+    )
+}
+
 ### SEGMENTED PLOTS ####
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

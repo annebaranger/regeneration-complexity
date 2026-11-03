@@ -74,7 +74,10 @@ make_var_meta <- function() {
     "mean_dbh_alive_cm",      "Adult",                          "Mean diameter",                        "",
     "mean_height_alive_m",    "Adult",                          "Mean height",                          "",
     "mortality_rate",         "Adult",                          "Mortality",                            "",
-    "basal_area_alive_m2",    "Adult",                          "Total basal area",                     ""
+    "basal_area_alive_m2",    "Adult",                          "Total basal area",                     "",
+    "max_dbh_alive_cm",       "Adult",                          "Max diameter",                         "",
+    "recruitment_rate",       "Adult",                          "Recruitment",                            "",
+    
   )
 }
 
@@ -127,8 +130,11 @@ p_stars <- function(p, ns = "ns") {
 pretty_name <- function(v, labels) unname(ifelse(v %in% names(labels), labels[v], v))
 
 
-p_class_colours <- c("< 0.001" = "#08306b", "< 0.01" = "#2171b5",
-                     "< 0.05"  = "#6baed6", "< 0.1"  = "#c6dbef", "ns" = "grey78")
+p_class_colours <- c("< 0.001" = "#021029",  # near-black navy
+                     "< 0.01"  = "#08306b",
+                     "< 0.05"  = "#1f5fa8",
+                     "< 0.1"   = "#9ecae1",
+                     "ns"      = "grey54")
 
 pca_axis_lab <- function(pca, k) {
   paste0("PCA axis ", k, " (",

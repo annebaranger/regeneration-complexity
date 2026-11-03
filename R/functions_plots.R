@@ -24,7 +24,7 @@ plot_pca_regen <- function(res, scale_f = 5, kw_x = 2.7, kw_y = 2.5, mid_level =
   ggplot() +
     geom_vline(xintercept = 0, colour = "darkgrey", linewidth = 0.2) +
     geom_hline(yintercept = 0, colour = "darkgrey", linewidth = 0.2) +
-    geom_point(data = pts, aes(PC1, PC2, color = reg_category), size = 0.5, shape = 19) +
+    geom_point(data = pts, aes(PC1, PC2, color = reg_category), size = 1, shape = 19) +
     ggside::geom_xsideboxplot(
       data = pts_cat, aes(x = PC1, y = reg_category, fill = reg_category),
       whisker.linewidth = 0.2, median.linewidth = 0.2, box.linewidth = 0.2,
@@ -51,7 +51,7 @@ plot_pca_regen <- function(res, scale_f = 5, kw_x = 2.7, kw_y = 2.5, mid_level =
                              seed = 58, show.legend = FALSE) +
     scale_color_brewer(name = "Variable type", palette = "Dark2") +
     scale_linewidth_manual(name = "Data source",
-                           values = c("Lidar-derived" = 0.45, "Inventory-derived" = 0.2)) +
+                           values = c("Lidar-derived" = 0.6, "Inventory-derived" = 0.2)) +
     theme_pca_paper() +
     theme(ggside.panel.scale = 0.15,
           ggside.panel.grid = element_blank(),
@@ -123,7 +123,7 @@ plot_light_panel <- function(pca_plot, box_plot) {
 # --- Bootstrapped effect plot (light or adults, plot or subplot) ----------------
 plot_effects <- function(stats, var_meta, responses, predictors, drop = NULL,
                          type_levels = c("Composition", "Quantity", "Complexity"),
-                         lw = c(0.2, 0.5)) {
+                         lw = c(0.35, 0.65)) {
   predictors <- setdiff(predictors, drop)
   lab <- dplyr::select(var_meta, variable, label, type)
   ord <- unique(c(lab$label[match(predictors, lab$variable)],
@@ -228,10 +228,10 @@ plot_varpart_univariate <- function(vp, labels, alpha = 0.1) {
   
   d <- bind_rows(
     data.frame(response = uf$response, fraction = "Light (unique)",
-               value = uf$light_unique, p = uf$p_light_unique_holm),
+               value = uf$light_unique, p = uf$p_light_unique),
     data.frame(response = uf$response, fraction = "Shared", value = uf$shared, p = NA),
     data.frame(response = uf$response, fraction = "Adults (unique)",
-               value = uf$adult_unique, p = uf$p_adult_unique_holm)) %>%
+               value = uf$adult_unique, p = uf$p_adult_unique)) %>%
     mutate(fraction = factor(fraction, levels = names(vp_fraction_colours)),
            response = factor(response, levels = lev),
            y_star   = pmax(value, 0, na.rm = TRUE) + 0.04)
@@ -239,47 +239,51 @@ plot_varpart_univariate <- function(vp, labels, alpha = 0.1) {
     mutate(response = factor(response, levels = lev),
            label = sprintf("adj. R² = %.2f %s", full_adj_r2, p_stars(p_full, "n.s.")))
   y_top <- max(d$y_star) + 0.12
+
+  x_labs <- setNames(
+    paste0(pn(as.character(top$response)), "\n", top$label),
+    as.character(top$response)
+  )
   
   fig_a <- ggplot(d, aes(x = response, y = value, fill = fraction)) +
     geom_hline(yintercept = 0, colour = "grey50") +
     geom_col(position = position_dodge(width = 0.8), width = 0.75) +
     geom_text(aes(y = y_star, label = p_stars(p, "n.s."), group = fraction),
-              position = position_dodge(width = 0.8), vjust = 0, size=9 * 0.353, colour = "grey20") +
-    geom_text(data = top, aes(x = response, y = y_top, label = label),
-              inherit.aes = FALSE, size=9 * 0.353, colour = "grey25") +
+              position = position_dodge(width = 0.8), vjust=1,
+              size = 9 * 0.353, colour = "grey20") +
     scale_fill_manual(values = vp_fraction_colours, name = NULL) +
-    scale_x_discrete(labels = pn) +
-    scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
-    labs(x = NULL, y = "Variance explained (adjusted R²)")+
-         #title = "Variance explained by light and adults",
-         #subtitle = "Stars: permutation tests of unique fractions,Holm-corrected across responses") +
+    scale_x_discrete(labels = x_labs) +
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0.08))) +
+    labs(x = NULL, y = "Variance explained (adjusted R²)") +
     theme_varpart() +
-    theme(panel.grid.major.x = element_blank())
+    theme(panel.grid.major.x = element_blank(),
+          axis.text.x = element_text(lineheight = 1.1))
   
-  fig_b <-vp$uni_importance %>%
+  fig_b <- vp$uni_importance %>%
     mutate(response = factor(response, levels = lev),
            variable = factor(variable, levels = c(rev(vp$light_vars), rev(vp$adult_vars))),
            group    = factor(group, levels = c("Adults", "Light")),
+           panel    = "Regeneration",                                   # <- new
            label    = sprintf("#%d%s", rank,
                               if_else(p_perm > alpha, "", paste0("\n", p_stars(p_perm, "n.s."))))) %>%
     ggplot(aes(x = response, y = variable, fill = individual)) +
     geom_tile(colour = "white", linewidth = 1.2) +
-    geom_text(aes(label = label), size=9 * 0.353, lineheight = 0.85, colour = "grey10") +
-    facet_grid(group ~ ., scales = "free_y", space = "free_y",switch = "y") +
+    geom_text(aes(label = label), size = 9 * 0.353, lineheight = 0.85, colour = "grey10") +
+    facet_grid(group ~ panel, scales = "free_y", space = "free_y", switch = "y") +   # <- ~ panel
     scale_fill_gradient2(low = "#B2443A", mid = "white", high = "#2B4C7E", midpoint = 0,
                          name = "Individual \nimportance\n(adjusted R²)") +
     scale_x_discrete(labels = pn, position = "top") +
     scale_y_discrete(labels = pn) +
-    labs(x = NULL, y = NULL) + #, title = "Importance ranking of predictors",
-        # subtitle = "#: rank within each response  |  Stars: permutation test") +
+    labs(x = NULL, y = NULL) +
     theme_varpart() +
     theme(panel.grid = element_blank(),
+          text = element_text(size = 8),
           strip.text.y = element_text(face = "bold", angle = 0, size = 11),
-          legend.key.width = unit(0.5, "cm"),
-          legend.key.height = unit(0.25, "cm"),
-          strip.placement   = "outside",                  # strips go outside the y-axis labels
           strip.text.y.left = element_text(angle = 90),
-          text=element_text(zie=8))
+          strip.text.x = element_text(face = "bold", size = 11),         # <- match Light/Adults
+          strip.placement = "outside",
+          legend.key.width = unit(0.5, "cm"),
+          legend.key.height = unit(0.25, "cm"))
   
   patchwork::wrap_plots(fig_a, fig_b, widths = c(1.3, 1)) +
     patchwork::plot_annotation(tag_levels = "A")
