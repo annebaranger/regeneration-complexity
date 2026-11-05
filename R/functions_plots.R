@@ -20,7 +20,18 @@ plot_pca_regen <- function(res, scale_f = 5, kw_x = 2.7, kw_y = 2.5, mid_level =
   ax      <- pca_axes(pts, vc, scale_f)
   kw1 <- filter(res$kw, axis == "PC1") %>% mutate(x = kw_x, y = mid_level)
   kw2 <- filter(res$kw, axis == "PC2") %>% mutate(x = mid_level, y = kw_y)
-  
+  # arrow labels: bold for lidar-derived variables (thick arrows); extra blank
+  # anchors along the arrows keep repelled labels from sitting on the lines;
+  # the two richness labels are nudged apart as their arrow tips almost coincide
+  arrow_labs <- arrow_label_df(vc, scale_f) %>%
+    bind_rows(vc %>%
+                tidyr::crossing(t = seq(0.05, 1, length.out = 30)) %>%
+                transmute(x = PC1 * scale_f * t, y = PC2 * scale_f * t, abrv = "", type)) %>%
+    mutate(face = if_else(abrv %in% vc$abrv[vc$Source == "Lidar-derived"], "bold", "plain"),
+           nudge_y = case_when(abrv == "Richn. sap." ~ -0.7,
+                               abrv == "Richn. tot." ~ 0.3,
+                               TRUE ~ 0))
+
   ggplot() +
     geom_vline(xintercept = 0, colour = "darkgrey", linewidth = 0.2) +
     geom_hline(yintercept = 0, colour = "darkgrey", linewidth = 0.2) +
@@ -45,10 +56,11 @@ plot_pca_regen <- function(res, scale_f = 5, kw_x = 2.7, kw_y = 2.5, mid_level =
                  aes(x = 0, y = 0, xend = PC1 * scale_f, yend = PC2 * scale_f,
                      color = type, linewidth = Source),
                  arrow = arrow(length = unit(0.10, "cm")), lineend = "round") +
-    ggrepel::geom_text_repel(data = arrow_label_df(vc, scale_f),
-                             aes(x = x, y = y, label = abrv, color = type),
-                             size=9 * 0.353, segment.color = "grey50", segment.size = 0.1,
-                             seed = 58, show.legend = FALSE) +
+    ggrepel::geom_text_repel(data = arrow_labs,
+                             aes(x = x, y = y, label = abrv, color = type, fontface = face),
+                             nudge_y = arrow_labs$nudge_y,
+                             size = 8 * 0.353, segment.color = "grey50", segment.size = 0.1,
+                             max.overlaps = Inf, seed = 58, show.legend = FALSE) +
     scale_color_brewer(name = "Variable type", palette = "Dark2") +
     scale_linewidth_manual(name = "Data source",
                            values = c("Lidar-derived" = 0.6, "Inventory-derived" = 0.2)) +
