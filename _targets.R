@@ -35,11 +35,12 @@ paper_vars <- list(
                  "Height_increment_mn", "empty_gf", "H_height", "fhd", "ri", "pad_cv"),
   light_expl = c("lrb_mean", "gini_h_rb", "slope_ref_agg", "bl_diff_abs"),
   adult_expl = c("n_trees_alive", "species_richness_alive", "mean_dbh_alive_cm",
-                 "mortality_rate","recruitment_rate", "max_dbh_alive_cm", "browsing"),
+                 "mortality_rate","recruitment_rate", "max_dbh_alive_cm", "rgr_mean",
+                 "rgr_sd"),
   # adult_expl = c("n_trees_alive", "species_richness_alive", "mean_dbh_alive_cm",
   #                "basal_area_alive_m2", "mean_height_alive_m", "browsing"),
   variability = c("ext_ref_agg", "slope_ref_agg", "gini_h_rb"),
-  vp_adult   = c("species_richness_alive", "mean_dbh_alive_cm", "n_trees_alive"),
+  vp_adult   = c("species_richness_alive", "mean_dbh_alive_cm", "n_trees_alive","rgr_sd"),
   vp_light   = c("lrb_mean", "gini_h_rb", "slope_ref_agg"),
   vp_regen   = c("richness", "abundance", "ri"),
   vp_log     = c("abundance"),
@@ -48,7 +49,7 @@ paper_vars <- list(
                  lrb_mean = "Radiative budget \nmean (log)", gini_h_rb = "Gini index",
                  slope_ref_agg = "Light profile \nslope at 4.5m",
                  richness = "Richness", abundance = "Abundance", ri = "Complexity",
-                 n_trees_alive="Tree number")
+                 n_trees_alive="Tree number",rgr="Relative growth rate")
 )
 
 
@@ -401,7 +402,7 @@ list(
              format = "file"),
   tar_target(fig_varpart_uni,  plot_varpart_univariate(varpart, paper_vars$vp_labels)),
   tar_target(file_fig7,
-             save_fig(fig_varpart_uni, "mainfig7_varpart_v2", 16, 9, scale = 1.2),
+             save_fig(fig_varpart_uni, "mainfig7_varpart_v3", 16, 9, scale = 1.2),
              format = "file"),
   tar_target(fig_rda_triplot,  plot_rda_triplot(varpart, paper_vars$vp_labels)),
   tar_target(file_fig7.2,

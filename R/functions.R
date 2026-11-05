@@ -1557,7 +1557,8 @@ get_adults_2025 <- function(inventory_df){
       dead=status_2025 %in%c("fallen","gone","gone (stump)","snag","not recorded"),
       recruit= status_2025=="ingrowth",
       basal_area_m2 = pi * (dbh_2025_cm / 200)^2,  # DBH in cm -> radius in m
-      alive_big = status_2025 == "alive" & dbh_2025_cm > 20
+      alive_big = status_2025 == "alive" & dbh_2025_cm > 20,
+      rgr=(dbh_previous_cm-dbh_2025_cm)/dbh_previous_cm
     ) %>%
     group_by(plot) %>%
     summarise(
@@ -1566,6 +1567,9 @@ get_adults_2025 <- function(inventory_df){
       n_dead = sum(dead == 1, na.rm = TRUE),
       # n_cut = sum(Cut17 == 1, na.rm = TRUE),
       n_recruits = sum(recruit == 1, na.rm = TRUE),
+      
+      rgr_mean=mean(rgr,na.rm=TRUE),
+      rgr_sd=sd(rgr,na.rm=TRUE),
       
       species_richness_total = n_distinct(species[!is.na(species)]),
       species_richness_alive = n_distinct(species[alive & !is.na(species)]),
