@@ -77,7 +77,8 @@ make_var_meta <- function() {
     "basal_area_alive_m2",    "Adult",                          "Total basal area",                     "",
     "max_dbh_alive_cm",       "Adult",                          "Max diameter",                         "",
     "recruitment_rate",       "Adult",                          "Recruitment",                            "",
-    
+    "rgr_mean",               "Adult",                          "Mean relative \ngrowth rate",          "",
+    "rgr_sd",               "Adult",                          "SD of relative \ngrowth rate",          ""
   )
 }
 

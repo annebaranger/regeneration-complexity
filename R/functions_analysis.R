@@ -24,7 +24,7 @@ pca_var_coord <- function(pca, var_meta, lidar_vars = NULL) {
     left_join(var_meta, by = "variable") %>%
     mutate(label  = fix_cross_labels(label, variable),
            type   = tidyr::replace_na(type, "Other"),
-           Source = if_else(variable %in% lidar_vars, "Lidar-derived", "Inventory-derived"))
+           Source = if_else(variable %in% lidar_vars, "Lidar-derived", "Survey-derived"))
 }
 
 # --- Regeneration structure PCA ------------------------------------------------

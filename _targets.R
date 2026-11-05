@@ -26,7 +26,7 @@ plot_values <- tibble::tibble(
 
 paper_vars <- list(
   pca_regen  = c("richness", "H", "richness_sapling", "cwm_shade", "abundance", "n_sapling",
-                 "Height_increment_mn", "H_height", "empty_gf", "pad_tot", "pad_cv", "ri", "fhd"),
+                 "Height_increment_mn", "H_height", "empty_gf", "pad_cv", "ri", "fhd"),
   lidar      = c("empty_gf", "pad_tot", "pad_cv", "ri", "fhd"),
   light      = c("lrb_mean", "ext_ref_agg", "rb_cv", "gini_h_rb", "bl_diff_abs", "slope_ref_agg"),
   light_box  = c("lrb_mean", "ext_ref_agg", "rb_cv", "gini_h_rb", "bl_diff_abs", "slope_ref_agg",
@@ -40,7 +40,7 @@ paper_vars <- list(
   # adult_expl = c("n_trees_alive", "species_richness_alive", "mean_dbh_alive_cm",
   #                "basal_area_alive_m2", "mean_height_alive_m", "browsing"),
   variability = c("ext_ref_agg", "slope_ref_agg", "gini_h_rb"),
-  vp_adult   = c("species_richness_alive", "mean_dbh_alive_cm", "n_trees_alive","rgr_sd"),
+  vp_adult   = c("species_richness_alive", "mean_dbh_alive_cm","n_trees_alive"),
   vp_light   = c("lrb_mean", "gini_h_rb", "slope_ref_agg"),
   vp_regen   = c("richness", "abundance", "ri"),
   vp_log     = c("abundance"),
@@ -315,7 +315,7 @@ list(
   tar_target(cor_regen, cor_table(pca_regen$data)),
   tar_target(fig_pca_regen, plot_pca_regen(pca_regen)),
   tar_target(file_fig1,
-             save_fig(fig_pca_regen, "mainfig1_PCA_regen_v2", 8.5, 11, scale = 1.2),
+             save_fig(fig_pca_regen, "mainfig1_PCA_regen_v3", 8.5, 11, scale = 1.2),
              format = "file"),
   
   # --- 2. light descriptors, plot level ---------------------------------------

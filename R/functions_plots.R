@@ -63,7 +63,7 @@ plot_pca_regen <- function(res, scale_f = 5, kw_x = 2.7, kw_y = 2.5, mid_level =
                              max.overlaps = Inf, seed = 58, show.legend = FALSE) +
     scale_color_brewer(name = "Variable type", palette = "Dark2") +
     scale_linewidth_manual(name = "Data source",
-                           values = c("Lidar-derived" = 0.6, "Inventory-derived" = 0.2)) +
+                           values = c("Lidar-derived" = 0.6, "Survey-derived" = 0.2)) +
     theme_pca_paper() +
     theme(ggside.panel.scale = 0.15,
           ggside.panel.grid = element_blank(),
