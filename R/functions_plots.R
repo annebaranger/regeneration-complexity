@@ -336,3 +336,197 @@ plot_rda_triplot <- function(vp, labels, regen_colour = "#2B4C7E") {
          y = sprintf("RDA axis 2 (%.1f %%, p = %.3f)", pct[2], pax[2])) +
     theme_varpart()
 }
+
+# --- Fig: light distribution of one plot (3D views, xy sum, vertical profile) --
+
+# Project scene coordinates (m) onto the page, looking down at the (x = 0, y = 0)
+# corner: that corner is the closest, x runs to the right and y to the left.
+iso_project <- function(x, y, z, tilt) {
+  data.frame(u = (x - y) * cos(pi / 6), v = (x + y) * tilt + z)
+}
+
+# One face of a cube as polygons. `val` is the matrix of voxels of the face,
+# averaged by blocks of `step` x `step` cells to keep the figure light; `to_xyz`
+# converts the positions along the matrix rows and columns (m) to scene coordinates.
+iso_face <- function(val, step, vox, to_xyz, tilt) {
+  ra <- ceiling(seq_len(nrow(val)) / step)
+  rb <- ceiling(seq_len(ncol(val)) / step)
+  na <- tabulate(ra)
+  nb <- tabulate(rb)
+  m  <- t(rowsum(t(rowsum(val, ra, na.rm = TRUE)), rb, na.rm = TRUE)) / outer(na, nb)
+  ea <- c(0, cumsum(na)) * vox
+  eb <- c(0, cumsum(nb)) * vox
+  ia <- rep(seq_along(na), times = length(nb))
+  ib <- rep(seq_along(nb), each  = length(na))
+  a  <- c(ea[ia], ea[ia + 1], ea[ia + 1], ea[ia])
+  b  <- c(eb[ib], eb[ib], eb[ib + 1], eb[ib + 1])
+  xyz <- to_xyz(a, b)
+  cbind(iso_project(xyz$x, xyz$y, xyz$z, tilt),
+        cell = rep(seq_along(ia), 4), val = rep(as.vector(m), 4))
+}
+
+# 3D view of an [y, x, z] array, drawn on the common page limits `lim`; `z_thr`
+# optionally marks a height on the two visible sides.
+plot_iso_cube <- function(rb, title, lim, rb_limits, vox, tilt, step, z_thr = NULL,
+                          thr_col = "#0091A8") {
+  nz    <- dim(rb)[3]
+  z_top <- nz * vox
+  x_len <- dim(rb)[2] * vox
+  y_len <- dim(rb)[1] * vox
+  cube  <- bind_rows(
+    iso_face(rb[, 1, ], step, vox, function(a, b) list(x = 0, y = a, z = b), tilt),
+    iso_face(rb[1, , ], step, vox, function(a, b) list(x = a, y = 0, z = b), tilt),
+    iso_face(rb[, , nz], step, vox, function(a, b) list(x = b, y = a, z = z_top), tilt),
+    .id = "face"
+  ) %>%
+    mutate(cell = as.numeric(face) * 1e7 + cell,
+           val  = pmax(val, rb_limits[1]))
+
+  lab_left <- function(z, lab, col) {
+    iso_project(0, y_len, z, tilt) %>% mutate(u = u - 1, lab = lab, col = col)
+  }
+  labs_h <- bind_rows(lab_left(0, "0 m", "grey20"),
+                      lab_left(z_top, sprintf("%.0f m", z_top), "grey20"))
+
+  p <- ggplot() +
+    geom_polygon(data = cube, aes(u, v, group = cell, fill = val, colour = val),
+                 linewidth = 0.05)
+  if (!is.null(z_thr)) {
+    labs_h <- bind_rows(labs_h, lab_left(z_thr, sprintf("%g m", z_thr), thr_col))
+    p <- p +
+      geom_path(data = iso_project(c(0, 0, x_len), c(y_len, 0, 0), z_thr, tilt),
+                aes(u, v), colour = thr_col, linewidth = 0.7)
+  }
+  p +
+    geom_text(data = labs_h, aes(u, v, label = lab), hjust = 1, colour = labs_h$col,
+              size = 7 * 0.353) +
+    scale_fill_viridis_c(option = "inferno", transform = "log10",
+                         breaks = c(100, 300, 1000, 3000), limits = rb_limits,
+                         aesthetics = c("fill", "colour"),
+                         name = "Radiative budget per voxel") +
+    guides(colour = "none", fill = guide_colourbar(title.position = "top")) +
+    coord_fixed(xlim = lim$u, ylim = lim$v, clip = "off", expand = FALSE) +
+    labs(title = title) +
+    theme_void(base_size = 8) +
+    theme(plot.title = element_text(size = 8, face = "bold", margin = margin(b = 4, l = 12)))
+}
+
+#' Light distribution of one plot, from which the light metrics are derived
+#'
+#' A: the voxels of the radiative budget as simulated, on the terrain. B: the same
+#' voxels once height-normalised, with the top of the regeneration layer. C: xy sum
+#' of the voxels of that layer (basis of the Gini index and of the mean radiative
+#' budget). D: vertical extinction profile and its slope at the top of the layer.
+#'
+#' The printed values are those stored in tls_metrics, so they match the analyses.
+#' The map and profile are recomputed the same way as get_light_metrics() and
+#' get_Hext(). rb_mean is computed by get_complexity() over 0-4 m, whereas the map
+#' and the Gini index use 0-4.5 m.
+#'
+#' @param rb_norm path to the height-normalised radiative budget (rb_norm_<plot>)
+#' @param rb_raw path to the radiative budget before normalisation (rb_<plot>)
+#' @param tls_metrics table of light metrics
+#' @param plot_name plot to display
+#' @param time simulation time
+#' @param voxel_size voxel size (m)
+#' @param tilt flattening of the 3D views: lower values show the top face at a more
+#'   grazing angle and shorten the panels
+#' @param cube_step number of voxels averaged along each edge of the cells drawn
+#'   on the cubes (1 = every voxel, for a much heavier figure)
+#' @param rb_floor voxel value below which the log colour scale of the cubes saturates
+#' @param thr_col colour of the regeneration height threshold
+plot_light_3d <- function(rb_norm, rb_raw, tls_metrics, plot_name, time = 12,
+                          voxel_size = 0.25, tilt = 0.35, cube_step = 2, rb_floor = 100,
+                          thr_col = "#0091A8") {
+  stored <- prep_data(tls_metrics, NULL,
+                      c("rb_mean", "gini_h_rb", "slope_ref_agg", "ext_ref_agg",
+                        "z_top", "band_up"),
+                      plot_level = "plot", t = time) %>%
+    filter(plot == plot_name)
+  stopifnot(nrow(stored) == 1)
+
+  # array rows run north to south: reorder them so that the row index grows with y
+  north_up <- function(a) a[rev(seq_len(dim(a)[1])), , , drop = FALSE]
+  rb    <- north_up(loadRData(rb_norm)[[as.character(time)]])
+  raw   <- north_up(loadRData(rb_raw)[[as.character(time)]])
+  z_thr <- stored$band_up
+  k_thr <- round(z_thr / voxel_size)
+  # the layers above the canopy are mostly filled with a constant by normalize_rb()
+  k_top <- min(round(stored$z_top / voxel_size), dim(rb)[3])
+  z_top <- k_top * voxel_size
+
+  # --- A, B: 3D views, on the same scales -----------------------------------------
+  x_len <- dim(rb)[2] * voxel_size
+  y_len <- dim(rb)[1] * voxel_size
+  lim <- list(u = c(-y_len - 1, x_len) * cos(pi / 6),
+              v = c(0, (x_len + y_len) * tilt + dim(raw)[3] * voxel_size))
+  rb_limits <- c(rb_floor, max(raw, rb[, , seq_len(k_top)], na.rm = TRUE))
+
+  p_raw <- plot_iso_cube(raw, "Simulated, on the terrain", lim, rb_limits,
+                         voxel_size, tilt, cube_step)
+  p_norm <- plot_iso_cube(rb[, , seq_len(k_top), drop = FALSE], "Height-normalised",
+                          lim, rb_limits, voxel_size, tilt, cube_step,
+                          z_thr = z_thr, thr_col = thr_col)
+
+  # --- C: xy sum of the voxels of the regeneration layer ------------------------
+  xy_sum <- rowSums(rb[, , seq_len(k_thr), drop = FALSE], dims = 2, na.rm = TRUE)
+  xy_df  <- expand.grid(y = (seq_len(nrow(xy_sum)) - 0.5) * voxel_size,
+                        x = (seq_len(ncol(xy_sum)) - 0.5) * voxel_size) %>%
+    mutate(val = as.vector(xy_sum))
+
+  p_xy <- ggplot(xy_df, aes(x, y, fill = val)) +
+    geom_raster() +
+    scale_fill_viridis_c(option = "inferno", n.breaks = 4, name = "Summed radiative budget") +
+    guides(fill = guide_colourbar(title.position = "top")) +
+    coord_fixed(expand = FALSE) +
+    labs(x = "x (m)", y = "y (m)",
+         title = sprintf("XY sum of voxels, 0–%g m", z_thr),
+         subtitle = sprintf("Gini = %.2f   Mean radiative budget = %.0f",
+                            stored$gini_h_rb, stored$rb_mean)) +
+    theme_pca_paper() +
+    theme(aspect.ratio = NULL,
+          panel.grid = element_blank(),
+          plot.title = element_text(size = 8, face = "bold", margin = margin(b = 4)),
+          plot.subtitle = element_text(size = 8))
+
+  # --- D: vertical profile ------------------------------------------------------
+  rb_prof <- colSums(rb, dims = 2, na.rm = TRUE)
+  prof <- data.frame(z   = seq_along(rb_prof) * voxel_size,
+                     ext = 1 - rb_prof / max(rb_prof, na.rm = TRUE)) %>%
+    filter(z <= z_top)
+  tang <- data.frame(z = c(max(0, z_thr - 6), z_thr + 6)) %>%
+    mutate(ext = stored$ext_ref_agg + stored$slope_ref_agg * (z - z_thr))
+
+  p_prof <- ggplot(prof, aes(ext, z)) +
+    annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = z_thr,
+             fill = thr_col, alpha = 0.12) +
+    geom_hline(yintercept = z_thr, colour = thr_col, linewidth = 0.4, linetype = 2) +
+    geom_path(linewidth = 0.5) +
+    geom_line(data = tang, colour = "#C1272D", linewidth = 0.7) +
+    annotate("point", x = stored$ext_ref_agg, y = z_thr, colour = "#C1272D", size = 1.5) +
+    annotate("text", x = 0.02, y = z_thr + 0.7, label = sprintf("%g m", z_thr),
+             colour = thr_col, hjust = 0, vjust = 0, size = 7 * 0.353) +
+    annotate("text", x = 0.02, y = z_thr + 5,
+             label = sprintf("Slope at %g m\n= %.3f m⁻¹", z_thr, stored$slope_ref_agg),
+             colour = "#C1272D", hjust = 0, vjust = 0, size = 8 * 0.353, lineheight = 0.9) +
+    scale_x_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), expand = expansion(0)) +
+    scale_y_continuous(limits = c(0, z_top), expand = expansion(0)) +
+    labs(x = "Light extinction\n(1 - RB / max RB)", y = "Height (m)",
+         title = "Vertical profile") +
+    theme_pca_paper() +
+    theme(aspect.ratio = 1.5,
+          plot.title = element_text(size = 8, face = "bold", margin = margin(b = 4)))
+
+  cubes <- patchwork::wrap_plots(p_raw, p_norm, guides = "collect")
+  patchwork::wrap_plots(cubes, p_xy, p_prof, widths = c(2.2, 1.1, 0.75)) +
+    patchwork::plot_annotation(tag_levels = "A") &
+    theme(plot.tag = element_text(size = 9, face = "bold"),
+          plot.margin = margin(4, 6, 4, 6),
+          legend.position = "bottom",
+          legend.direction = "horizontal",
+          legend.justification = "center",
+          legend.key.height = unit(0.2, "cm"),
+          legend.key.width = unit(0.7, "cm"),
+          legend.title = element_text(size = 8, margin = margin(b = 3)),
+          legend.text = element_text(size = 7))
+}

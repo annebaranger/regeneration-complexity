@@ -320,3 +320,31 @@ run_varpart <- function(tls_metrics, forest_data_plot, adult_vars, light_vars, r
        uni_importance = uni_importance,
        adult_vars = adult_vars, light_vars = light_vars, regen_vars = regen_vars)
 }
+
+# --- Light effects on species / individuals ratio (plot level) -----------------
+# Ratio of species richness to number of individuals, for all individuals
+# (richness / abundance) and for saplings only (richness_sapling / n_sapling).
+# Plots with no individuals in a class get NA (dropped per model).
+# Same models as section 3 of _targets.R: one lm per (ratio, light metric) pair,
+# variables standardized, row bootstrap via boot_effects().
+# Returns a table only (no figure): estimate, 80% / 50% bootstrap intervals,
+# bootstrap median, p_boot and n plots used.
+light_effect_sp_ratio <- function(tls_metrics, forest_data_plot, light_vars, B = 1000) {
+  d <- build_light_effect_data(tls_metrics, forest_data_plot,
+                               c("richness", "abundance", "richness_sapling", "n_sapling",
+                                 light_vars), "plot") %>%
+    mutate(ratio_sp_ind         = if_else(abundance > 0, richness / abundance, NA_real_),
+           ratio_sp_ind_sapling = if_else(n_sapling > 0, richness_sapling / n_sapling, NA_real_))
+
+  responses <- c("ratio_sp_ind", "ratio_sp_ind_sapling")
+  n_obs <- tidyr::expand_grid(explained = responses, explaining = light_vars) %>%
+    mutate(n = purrr::map2_int(explained, explaining,
+                               ~ sum(complete.cases(d[, c(.x, .y)]))))
+
+  boot_effects(d, responses, light_vars, B = B) %>%
+    left_join(n_obs, by = c("explained", "explaining")) %>%
+    mutate(signif = p_stars(p_boot)) %>%
+    dplyr::select(explained, explaining, n, estimate,
+                  ci80_lo = lo, ci50_lo = lo5, boot_median = med, ci50_hi = hi5, ci80_hi = hi,
+                  nrep, p_boot, signif)
+}

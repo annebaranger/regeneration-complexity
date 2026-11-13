@@ -5,7 +5,7 @@ tar_source(files = "R")
 tar_option_set(packages = c("dplyr", "ggplot2","data.table","tidyr","readxl","readr",
                             "ncdf4", "terra","sf","purrr","tibble","mgcv",
                             "lidR","ITSMe"),
-               controller = crew_controller_local(workers = 3),
+               controller = crew_controller_local(workers = 10),
                error = "null")
 # lapply(c("targets",
 #          "dplyr", "ggplot2","data.table","tidyr","readxl",
@@ -26,7 +26,7 @@ plot_values <- tibble::tibble(
 
 paper_vars <- list(
   pca_regen  = c("richness", "H", "richness_sapling", "cwm_shade", "abundance", "n_sapling",
-                 "Height_increment_mn", "H_height", "empty_gf", "pad_cv", "ri", "fhd"),
+                 "Height_increment_mn", "H_height", "empty_gf", "pad_cv", "ri", "fhd","pad_tot"),
   lidar      = c("empty_gf", "pad_tot", "pad_cv", "ri", "fhd"),
   light      = c("lrb_mean", "ext_ref_agg", "rb_cv", "gini_h_rb", "bl_diff_abs", "slope_ref_agg"),
   light_box  = c("lrb_mean", "ext_ref_agg", "rb_cv", "gini_h_rb", "bl_diff_abs", "slope_ref_agg",
@@ -347,7 +347,15 @@ list(
   tar_target(file_fig3,
              save_fig(fig_light_eff, "mainfig3_light_eff", 16, 9, scale = 1.2),
              format = "file"),
+  tar_target(file_fig3.1,
+             save_fig(fig_light_eff, "mainfig3_light_eff_pres", 13, 9, scale = 1.2),
+             format = "file"),
   
+  # --- 3b. light effects on species/individuals ratio, plot level (table only) --
+  tar_target(tab_light_sp_ratio,
+             light_effect_sp_ratio(tls_metrics, forest_data_plot,
+                                   paper_vars$light_expl, B = 1000)),
+
   # --- 4. subplot level --------------------------------------------------------
   tar_target(pca_light_subplot,
              run_pca_light(tls_metrics, forest_data_subplot, paper_vars$light, "subplot", var_meta)),
@@ -365,9 +373,9 @@ list(
                           B = 1000, random = "plot", cluster_boot = FALSE)),
   tar_target(fig_light_eff_subplot,
              plot_effects(boot_light_subplot, var_meta, paper_vars$regen,
-                          paper_vars$light_expl, drop = "bl_diff_abs", lw = c(0.9, 1.5))),
+                          paper_vars$light_expl, drop = "bl_diff_abs")),
   tar_target(file_fig4,
-             save_fig(fig_light_eff_subplot, "si_light_eff_subplot", 16, 9, scale = 1.2),
+             save_fig(fig_light_eff_subplot, "si_light_eff_subplot", 13, 9, scale = 1.2),
              format = "file"),
   # --- 5. temporal vs spatial variability ---------------------------------------
   tar_target(light_variability, compute_light_variability(tls_metrics, paper_vars$variability)),
@@ -388,6 +396,12 @@ list(
                           paper_vars$adult_expl, lw = c(0.9, 1.5))),
   tar_target(file_fig6,
              save_fig(fig_adult_eff, "si_adult_eff", 16, 9, scale = 1.2),
+             format = "file"),
+  
+  # --- example plot: 3D light distribution, xy sum and vertical profile ----------
+  tar_target(fig_light_3d, plot_light_3d(rb_norm_GER34, rb_GER34, tls_metrics, "GER34")),
+  tar_target(file_fig_light_3d,
+             save_fig(fig_light_3d, "mainfig_light3d_GER34", 21, 9, scale = 1.2),
              format = "file"),
   
   # --- 7. variance partitioning --------------------------------------------------

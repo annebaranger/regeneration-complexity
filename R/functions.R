@@ -211,6 +211,10 @@ normalize_rb<-function(plot_name,
     k_ground[k_ground < 1] <- 1
     k_ground[k_ground > nz] <- nz
     
+    # rows of rb run north to south, whereas j follows y_centers (south to north):
+    # mirror the terrain so that k_ground[i, j] is the ground of column rb[j, i, ]
+    k_ground <- k_ground[, ny:1, drop = FALSE]
+    
     maxE=quantile(rb,probs=0.99)[[1]]
     arr_norm <- array(maxE, dim = dim(rb))
     
@@ -827,7 +831,7 @@ get_complexity <- function(pc_norm,
   out <- lapply(vars, function(v) {
     m <- matrix(NA_real_, ni, nj)
     m[cbind(d$i, d$j)] <- d[[v]]
-    terra::setValues(tmpl, as.vector(t(m[ni:1, , drop = FALSE])))  # row 1 = north
+    terra::setValues(tmpl, as.vector(t(m)))  # row 1 = north
   })
   out <- terra::rast(out)
   names(out) <- vars
@@ -903,14 +907,14 @@ get_Hext <- function(rb_norm,
   
   # -------------------------------------------------------------------
   # 1. geolocate the voxel grid and find which columns belong to which unit
-  #    (i indexes rows south -> north, j indexes columns west -> east:
+  #    (i indexes rows north -> south, j indexes columns west -> east:
   #     this is the orientation implied by your rast(wide, type = "xyz"))
   # -------------------------------------------------------------------
   chm  <- lidR::rasterize_canopy(pc, res = 0.15, algorithm = lidR::p2r())
   tmpl <- terra::rast(nrows = ni, ncols = nj,
                       extent = terra::ext(chm), crs = terra::crs(chm))
   
-  r_ij <- c(terra::setValues(tmpl, rep(ni:1,        each  = nj)),   # i
+  r_ij <- c(terra::setValues(tmpl, rep(seq_len(ni), each  = nj)),   # i
             terra::setValues(tmpl, rep(seq_len(nj), times = ni)))   # j
   names(r_ij) <- c("i", "j")
   
